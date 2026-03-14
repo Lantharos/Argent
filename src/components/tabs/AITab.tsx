@@ -365,16 +365,23 @@ export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }
     })
   }, [groupedModelFamilies])
 
+  const lastUserMessageIndex = useMemo(() => {
+    for (let i = tab.messages.length - 1; i >= 0; i--) {
+      if (tab.messages[i].role === 'user') return i
+    }
+    return -1
+  }, [tab.messages])
+
   const lastAssistantTextIndex = useMemo(() => {
     if (tab.messages.length === 0) {
       return -1
     }
 
-    const lastIndex = tab.messages.length - 1
-    const lastMessage = tab.messages[lastIndex]
-    
-    if (lastMessage.role === 'assistant' && !parseToolMessage(lastMessage.content)) {
-      return lastIndex
+    for (let index = tab.messages.length - 1; index >= 0; index -= 1) {
+      const message = tab.messages[index]
+      if (message.role === 'assistant' && !parseToolMessage(message.content)) {
+        return index
+      }
     }
 
     return -1
@@ -1050,34 +1057,52 @@ export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }
                     <span className="inline-block animate-pulse text-[#f0f0f0]">▌</span>
                   ) : null}
                 </div>
-                <div className="mt-1.5 flex items-center justify-between text-[11px] text-[#8a8a8a] opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[#9a9a9a] hover:bg-white/8 hover:text-[#d0d0d0]"
-                      onClick={() => {
-                        void copyToClipboard(message.content || '')
-                      }}
-                    >
-                      <Copy className="h-3.5 w-3.5" />
-                      Copy
-                    </button>
-                    {index === lastAssistantTextIndex ? (
-                      <button
-                        type="button"
-                        className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[#9a9a9a] hover:bg-white/8 hover:text-[#d0d0d0]"
-                        onClick={() => {
-                          void handleRetryLastAssistant()
-                        }}
-                        disabled={loading}
-                      >
-                        <RotateCcw className="h-3.5 w-3.5" />
-                        Retry
-                      </button>
-                    ) : null}
-                  </div>
-                  <span className="truncate pl-3 text-[#7d7d7d]">{assistantModelLabel}</span>
-                </div>
+                {(() => {
+                  const isCurrentTurn = index > lastUserMessageIndex
+                  if (loading && isCurrentTurn) return null
+
+                  let hasMoreText = false
+                  for (let i = index + 1; i < tab.messages.length; i++) {
+                    if (tab.messages[i].role === 'user') break
+                    if (tab.messages[i].role === 'assistant' && !parseToolMessage(tab.messages[i].content)) {
+                      hasMoreText = true
+                      break
+                    }
+                  }
+                  
+                  if (hasMoreText) return null
+
+                  return (
+                    <div className="mt-1.5 flex items-center justify-between text-[11px] text-[#8a8a8a] opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[#9a9a9a] hover:bg-white/8 hover:text-[#d0d0d0]"
+                          onClick={() => {
+                            void copyToClipboard(message.content || '')
+                          }}
+                        >
+                          <Copy className="h-3.5 w-3.5" />
+                          Copy
+                        </button>
+                        {index === lastAssistantTextIndex ? (
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[#9a9a9a] hover:bg-white/8 hover:text-[#d0d0d0]"
+                            onClick={() => {
+                              void handleRetryLastAssistant()
+                            }}
+                            disabled={loading}
+                          >
+                            <RotateCcw className="h-3.5 w-3.5" />
+                            Retry
+                          </button>
+                        ) : null}
+                      </div>
+                      <span className="truncate pl-3 text-[#7d7d7d]">{assistantModelLabel}</span>
+                    </div>
+                  )
+                })()}
               </div>
             ) : (
               message.content
