@@ -20,6 +20,12 @@
     background: rgba(0, 0, 0, 0.03);
   }
 
+  .workspace.is-browser-tab .workspace-titlebar-zone {
+    pointer-events: none;
+    -webkit-app-region: no-drag !important;
+    background: transparent;
+  }
+
   .workspace-titlebar {
     @apply absolute left-0 right-0 top-0 h-9 bg-black/26 backdrop-blur-2xl;
     box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.05);
@@ -48,6 +54,17 @@
 
   .workspace.is-titlebar-visible .workspace-content {
     padding-top: 36px;
+  }
+
+  .workspace.is-browser-tab.is-titlebar-visible .workspace-content {
+    padding-top: 0;
+  }
+
+  .workspace.is-browser-tab .workspace-titlebar {
+    background: transparent;
+    backdrop-filter: none;
+    box-shadow: none;
+    pointer-events: none;
   }
 
   .workspace-head {
@@ -141,6 +158,11 @@
 
   .browser-webview {
     -webkit-app-region: no-drag;
+  }
+
+  .browser-top-controls,
+  .browser-top-controls * {
+    -webkit-app-region: no-drag !important;
   }
 
   button,

@@ -187,7 +187,7 @@ export function Workspace({
     .filter((tab): tab is AppTab => Boolean(tab))
 
   return (
-    <section className={`workspace glass-panel ${titlebarVisible ? 'is-titlebar-visible' : ''}`}>
+    <section className={`workspace glass-panel ${titlebarVisible ? 'is-titlebar-visible' : ''} ${isBrowserTab ? 'is-browser-tab' : ''}`}>
       <div className="workspace-titlebar" />
       <div className="workspace-content">
         <div className={`workspace-body ${isBrowserTab ? 'bg-transparent backdrop-blur-none' : ''}`}>
