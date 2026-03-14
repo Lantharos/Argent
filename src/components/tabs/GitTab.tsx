@@ -91,6 +91,14 @@ function parseGitStatus(output: string): FileStatus[] {
   return parsed
 }
 
+function parseBranchAheadCount(output: string) {
+  const line = output.split('\n').find((entry) => entry.startsWith('# branch.ab '))
+  if (!line) return 0
+  const match = /^# branch\.ab \+(\d+) -(\d+)$/.exec(line.trim())
+  if (!match) return 0
+  return Number.parseInt(match[1] || '0', 10) || 0
+}
+
 function cleanPatchNoise(output: string) {
   return output
     .split('\n')
@@ -249,6 +257,7 @@ export function GitTab({ tab, isActive, onChange: _onChange }: Props) {
   const [historyLoading, setHistoryLoading] = useState(false)
   const [selectedCommitHash, setSelectedCommitHash] = useState<string | null>(null)
   const [commitPreview, setCommitPreview] = useState<string | null>(null)
+  const [pendingPushCount, setPendingPushCount] = useState(0)
 
   const [leftPanelWidth, setLeftPanelWidth] = useState(33)
   const [historyListWidth, setHistoryListWidth] = useState(36)
@@ -259,6 +268,11 @@ export function GitTab({ tab, isActive, onChange: _onChange }: Props) {
 
   const rootSplitRef = useRef<HTMLDivElement | null>(null)
   const historySplitRef = useRef<HTMLDivElement | null>(null)
+  const selectedCommitHashRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    selectedCommitHashRef.current = selectedCommitHash
+  }, [selectedCommitHash])
 
   const hasStagedChanges = useMemo(() => files.some((file) => file.isStaged), [files])
 
@@ -366,8 +380,9 @@ export function GitTab({ tab, isActive, onChange: _onChange }: Props) {
       const parsed = parseHistory(res.stdout)
       setHistory(parsed)
 
-      const keepSelection = parsed.some((commit) => commit.hash === selectedCommitHash)
-      const nextHash = keepSelection ? selectedCommitHash : parsed[0]?.hash || null
+      const currentSelected = selectedCommitHashRef.current
+      const keepSelection = parsed.some((commit) => commit.hash === currentSelected)
+      const nextHash = keepSelection ? currentSelected : parsed[0]?.hash || null
       setSelectedCommitHash(nextHash)
 
       if (nextHash) {
@@ -397,9 +412,28 @@ export function GitTab({ tab, isActive, onChange: _onChange }: Props) {
     } finally {
       setHistoryLoading(false)
     }
-  }, [installed, selectedCommitHash, tab.cwd])
+  }, [installed, tab.cwd])
 
-  const refreshStatus = useCallback(async () => {
+  const loadPendingPush = useCallback(async () => {
+    if (!installed) return
+
+    const res = await window.opensmith.git.exec({
+      cwd: tab.cwd,
+      args: ['status', '--porcelain=2', '--branch'],
+    })
+
+    if (!res.success || !res.stdout) {
+      setPendingPushCount(0)
+      return
+    }
+
+    setPendingPushCount(parseBranchAheadCount(res.stdout))
+  }, [installed, tab.cwd])
+
+  const refreshStatus = useCallback(async (options?: { includeHistory?: boolean; includePendingPush?: boolean }) => {
+    const includeHistory = options?.includeHistory ?? true
+    const includePendingPush = options?.includePendingPush ?? true
+
     if (!installed) return
 
     setLoading(true)
@@ -419,13 +453,22 @@ export function GitTab({ tab, isActive, onChange: _onChange }: Props) {
         setIsRepo(false)
       }
 
-      await loadHistory()
+      const followUps: Array<Promise<void>> = []
+      if (includeHistory) {
+        followUps.push(loadHistory())
+      }
+      if (includePendingPush) {
+        followUps.push(loadPendingPush())
+      }
+      if (followUps.length > 0) {
+        await Promise.all(followUps)
+      }
     } catch (error) {
       console.error('Failed to refresh git status', error)
     } finally {
       setLoading(false)
     }
-  }, [installed, loadHistory, tab.cwd])
+  }, [installed, loadHistory, loadPendingPush, tab.cwd])
 
   useEffect(() => {
     async function checkGit() {
@@ -449,7 +492,7 @@ export function GitTab({ tab, isActive, onChange: _onChange }: Props) {
             setIsRepo(false)
           }
 
-          await loadHistory()
+          await Promise.all([loadHistory(), loadPendingPush()])
         }
       } catch {
         setInstalled(false)
@@ -459,7 +502,7 @@ export function GitTab({ tab, isActive, onChange: _onChange }: Props) {
     }
 
     void checkGit()
-  }, [loadHistory, tab.cwd])
+  }, [loadHistory, loadPendingPush, tab.cwd])
 
   useEffect(() => {
     if (isActive && installed && !checking) {
@@ -475,7 +518,7 @@ export function GitTab({ tab, isActive, onChange: _onChange }: Props) {
 
   async function stageFile(path: string) {
     await window.opensmith.git.exec({ cwd: tab.cwd, args: ['add', '-A', '--', path] })
-    await refreshStatus()
+    await refreshStatus({ includeHistory: false, includePendingPush: false })
 
     if (selectedFile?.path === path) {
       await viewDiff({ ...selectedFile, isStaged: true, isUnstaged: false })
@@ -484,7 +527,7 @@ export function GitTab({ tab, isActive, onChange: _onChange }: Props) {
 
   async function unstageFile(path: string) {
     await window.opensmith.git.exec({ cwd: tab.cwd, args: ['reset', 'HEAD', path] })
-    await refreshStatus()
+    await refreshStatus({ includeHistory: false, includePendingPush: false })
 
     if (selectedFile?.path === path) {
       await viewDiff({ ...selectedFile, isStaged: false, isUnstaged: true })
@@ -531,7 +574,7 @@ export function GitTab({ tab, isActive, onChange: _onChange }: Props) {
         setCommitError(null)
       }
     }
-    await refreshStatus()
+    await refreshStatus({ includeHistory: false, includePendingPush: false })
   }
 
   async function viewDiff(file: FileStatus) {
@@ -884,6 +927,11 @@ export function GitTab({ tab, isActive, onChange: _onChange }: Props) {
                 </button>
                 <span>CHANGES</span>
                 <span className="normal-case text-[#777]">{files.length} changed file{files.length === 1 ? '' : 's'}</span>
+                {pendingPushCount > 0 ? (
+                  <span className="normal-case rounded bg-white/12 px-1.5 py-[1px] text-[#f2f2f2]">
+                    {pendingPushCount} to push
+                  </span>
+                ) : null}
               </div>
 
               <button
@@ -923,7 +971,11 @@ export function GitTab({ tab, isActive, onChange: _onChange }: Props) {
                   <button
                     onClick={() => void handleSync()}
                     disabled={loading}
-                    className="ghost-btn flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-transparent text-[#7b7b7b] hover:bg-white/8 hover:text-[#d0d0d0] disabled:cursor-not-allowed disabled:opacity-50"
+                    className={`ghost-btn flex h-8 w-8 shrink-0 items-center justify-center rounded-lg disabled:cursor-not-allowed disabled:opacity-50 ${
+                      pendingPushCount > 0
+                        ? 'bg-[#f1f1f1] text-[#121212] hover:bg-white'
+                        : 'bg-transparent text-[#7b7b7b] hover:bg-white/8 hover:text-[#d0d0d0]'
+                    }`}
                     title="Sync (Pull + Push)"
                   >
                     <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
@@ -934,7 +986,11 @@ export function GitTab({ tab, isActive, onChange: _onChange }: Props) {
                   <button
                     onClick={() => void handleSync()}
                     disabled={loading}
-                    className="primary-btn flex h-8 flex-1 items-center justify-center gap-1.5 rounded-lg text-xs font-medium !bg-white/6 !text-[#d8d8d8] hover:!bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                    className={`primary-btn flex h-8 flex-1 items-center justify-center gap-1.5 rounded-lg text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50 ${
+                      pendingPushCount > 0
+                        ? ''
+                        : '!bg-white/6 !text-[#d8d8d8] hover:!bg-white/10'
+                    }`}
                   >
                     <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
                     Sync Changes
