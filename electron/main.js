@@ -247,6 +247,23 @@ function setupIpc() {
     fs.writeFileSync(payload.path, payload.content, 'utf8')
     return true
   })
+
+  ipcMain.handle('fs:read-dir', (_, dirPath) => {
+    try {
+      const entries = fs.readdirSync(dirPath, { withFileTypes: true })
+      return entries.map(entry => ({
+        name: entry.name,
+        isDirectory: entry.isDirectory(),
+        path: path.join(dirPath, entry.name),
+      })).sort((a, b) => {
+        if (a.isDirectory && !b.isDirectory) return -1
+        if (!a.isDirectory && b.isDirectory) return 1
+        return a.name.localeCompare(b.name)
+      })
+    } catch (e) {
+      return []
+    }
+  })
 }
 
 app.whenReady().then(() => {

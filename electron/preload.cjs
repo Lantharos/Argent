@@ -41,5 +41,6 @@ contextBridge.exposeInMainWorld('opensmith', {
     openFile: (cwd) => ipcRenderer.invoke('fs:open-file', cwd),
     readFile: (path) => ipcRenderer.invoke('fs:read-file', path),
     saveFile: (path, content) => ipcRenderer.invoke('fs:save-file', { path, content }),
+    readDir: (dirPath) => ipcRenderer.invoke('fs:read-dir', dirPath),
   },
 })

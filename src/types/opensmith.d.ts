@@ -72,6 +72,8 @@ export type EditorTabData = AppTabBase & {
   content: string
   language: string
   dirty: boolean
+  fontSize?: number
+  sidebarOpen?: boolean
 }
 
 export type AppTab = AITabData | BrowserTabData | TerminalTabData | EditorTabData
@@ -139,6 +141,7 @@ declare global {
         openFile: (cwd: string | null) => Promise<string | null>
         readFile: (path: string) => Promise<string>
         saveFile: (path: string, content: string) => Promise<boolean>
+        readDir: (path: string) => Promise<{name: string, isDirectory: boolean, path: string}[]>
       }
     }
   }
