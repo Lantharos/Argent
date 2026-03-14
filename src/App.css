@@ -1,0 +1,151 @@
+@reference "./index.css";
+
+@layer components {
+  .app-shell {
+    @apply flex h-screen w-screen bg-transparent text-[#bebebe] overflow-hidden font-sans relative border border-white/12;
+    -webkit-app-region: drag;
+  }
+
+  .workspace {
+    @apply flex-1 flex flex-col relative bg-transparent overflow-hidden;
+    -electron-corner-smoothing: 100%;
+  }
+
+  .workspace-titlebar-zone {
+    @apply absolute top-0 left-0 right-0;
+    height: 42px;
+    z-index: 35;
+    -webkit-app-region: no-drag;
+    background: transparent;
+  }
+
+  .workspace-titlebar {
+    @apply absolute left-0 right-0 top-0 h-9 bg-black/26 backdrop-blur-2xl;
+    box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.05);
+    transform: translateY(-100%);
+    opacity: 0;
+    transition: transform 180ms ease, opacity 180ms ease;
+    -webkit-app-region: drag;
+    pointer-events: auto;
+    z-index: 36;
+  }
+
+  .workspace-content {
+    @apply flex-1 min-h-0;
+    padding-top: 0;
+    transition: padding-top 180ms ease;
+  }
+
+  .workspace-body {
+    @apply h-full min-h-0 bg-[#121212]/80 backdrop-blur-xl;
+  }
+
+  .workspace.is-titlebar-visible .workspace-titlebar {
+    transform: translateY(0);
+    opacity: 1;
+  }
+
+  .workspace.is-titlebar-visible .workspace-content {
+    padding-top: 36px;
+  }
+
+  .workspace-head {
+    @apply hidden;
+  }
+
+  .workspace-title {
+    @apply text-sm font-medium text-[#d8d8d8];
+  }
+
+  .workspace-actions {
+    @apply flex gap-1.5;
+  }
+
+  .workspace-panels {
+    @apply h-full min-h-0 flex-1 relative;
+  }
+
+  .split-handle {
+    @apply w-px bg-white/10 hover:bg-[#666666] transition-colors cursor-col-resize;
+  }
+
+  .tab-pane {
+    @apply flex h-full flex-col p-0 bg-transparent overflow-hidden;
+  }
+
+  .pane-head {
+    @apply flex items-center justify-between gap-3 px-4 py-3 border-b border-white/8;
+  }
+  
+  .pane-head-title {
+    @apply text-[11px] font-semibold text-[#7b7b7b] uppercase tracking-widest;
+  }
+
+  .browser-frame,
+  .editor-frame,
+  .terminal-frame {
+    @apply min-h-0 flex-1 overflow-hidden rounded-none border-0;
+  }
+
+  .editor-frame,
+  .terminal-frame {
+    @apply bg-black/20;
+  }
+
+  .terminal-frame .xterm-viewport {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .terminal-frame .xterm-viewport::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
+
+  .primary-btn,
+  .chip-btn,
+  .ghost-btn {
+    @apply rounded-lg text-xs transition-colors cursor-pointer flex items-center justify-center;
+  }
+
+  .primary-btn {
+    @apply bg-[#c8c8c8] text-[#161616] px-4 py-2 font-medium hover:bg-[#e5e5e5];
+  }
+
+  .chip-btn {
+    @apply bg-white/7 text-[#bebebe] border border-white/10 px-3 py-1.5 hover:bg-white/13 hover:text-white;
+  }
+
+  .ghost-btn {
+    @apply bg-transparent text-[#8d8d8d] px-3 py-1.5 hover:text-[#d0d0d0] hover:bg-white/8;
+  }
+
+  .terminal-tab .pane-head,
+  .editor-tab .pane-head {
+    @apply py-2;
+  }
+
+  .ai-tab .pane-head {
+    @apply border-b border-white/10;
+  }
+
+  .browser-webview {
+    -webkit-app-region: no-drag;
+  }
+
+  button,
+  input,
+  textarea,
+  .browser-tab,
+  .browser-frame,
+  .editor-frame,
+  .terminal-frame {
+    -webkit-app-region: no-drag;
+  }
+}
+
+@layer utilities {
+  .ambient { display: none; }
+  .ambient-a { display: none; }
+  .ambient-b { display: none; }
+}

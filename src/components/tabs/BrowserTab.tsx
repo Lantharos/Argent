@@ -1,0 +1,252 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { BrowserTabData } from '../../types/opensmith'
+
+type Props = {
+  tab: BrowserTabData
+  onChange: (next: BrowserTabData) => void
+}
+
+export function BrowserTab({ tab, onChange }: Props) {
+  const [urlInput, setUrlInput] = useState(tab.url)
+  const [nonce, setNonce] = useState(0)
+  const [canGoBack, setCanGoBack] = useState(false)
+  const [canGoForward, setCanGoForward] = useState(false)
+  const viewRef = useRef<any>(null)
+  const domReadyRef = useRef(false)
+
+  useEffect(() => {
+    setUrlInput(tab.url)
+  }, [tab.url])
+
+  const safeUrl = useMemo(() => {
+    try {
+      const parsed = new URL(tab.url)
+      if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+        return tab.url
+      }
+      return 'https://example.com'
+    } catch {
+      return 'https://example.com'
+    }
+  }, [tab.url])
+
+  function updateTabPatch(patch: Partial<BrowserTabData>) {
+    const next: BrowserTabData = { ...tab, ...patch }
+    if (
+      next.url === tab.url
+      && next.title === tab.title
+      && next.faviconUrl === tab.faviconUrl
+    ) {
+      return
+    }
+    onChange(next)
+  }
+
+  function resolveNavigationTarget(rawInput: string): string {
+    const value = rawInput.trim()
+    if (!value) {
+      return tab.url
+    }
+
+    if (/^https?:\/\//i.test(value)) {
+      try {
+        const parsed = new URL(value)
+        if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+          return parsed.toString()
+        }
+      } catch {
+        return `https://www.google.com/search?q=${encodeURIComponent(value)}`
+      }
+    }
+
+    if (!/\s/.test(value) && (/\./.test(value) || /^localhost(?::\d+)?$/i.test(value) || /^\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?$/.test(value))) {
+      const protocol = /^localhost(?::\d+)?$/i.test(value) || /^\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?$/.test(value) ? 'http://' : 'https://'
+      const candidate = `${protocol}${value}`
+      try {
+        const parsed = new URL(candidate)
+        if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+          return parsed.toString()
+        }
+      } catch {
+        return `https://www.google.com/search?q=${encodeURIComponent(value)}`
+      }
+    }
+
+    return `https://www.google.com/search?q=${encodeURIComponent(value)}`
+  }
+
+  function commitUrl() {
+    const next = resolveNavigationTarget(urlInput)
+    setUrlInput(next)
+    updateTabPatch({ url: next })
+  }
+
+  function withReadyWebview<T>(action: (webview: any) => T): T | null {
+    const webview = viewRef.current
+    if (!webview || !domReadyRef.current) {
+      return null
+    }
+
+    try {
+      return action(webview)
+    } catch {
+      return null
+    }
+  }
+
+  useEffect(() => {
+    const webview = viewRef.current
+    if (!webview) {
+      return
+    }
+
+    const syncNavState = () => {
+      const nextUrl = withReadyWebview((current) => current.getURL())
+      if (!nextUrl) {
+        return
+      }
+
+      const back = withReadyWebview((current) => current.canGoBack())
+      const forward = withReadyWebview((current) => current.canGoForward())
+      const nextTitle = withReadyWebview((current) => current.getTitle())
+
+      setCanGoBack(Boolean(back))
+      setCanGoForward(Boolean(forward))
+      setUrlInput(nextUrl)
+      const host = (() => {
+        try {
+          return new URL(nextUrl).hostname.replace(/^www\./, '')
+        } catch {
+          return 'Browser'
+        }
+      })()
+      updateTabPatch({ url: nextUrl, title: nextTitle || host })
+    }
+
+    const onDomReady = () => {
+      domReadyRef.current = true
+      syncNavState()
+    }
+
+    const onTitle = (event: any) => {
+      const title = (event?.title ?? '').trim()
+      if (title) {
+        updateTabPatch({ title })
+      }
+    }
+
+    const onFavicon = (event: any) => {
+      const favicon = event?.favicons?.[0] ?? null
+      updateTabPatch({ faviconUrl: favicon })
+    }
+
+    webview.addEventListener('did-navigate', syncNavState)
+    webview.addEventListener('did-navigate-in-page', syncNavState)
+    webview.addEventListener('did-finish-load', syncNavState)
+    webview.addEventListener('page-title-updated', onTitle)
+    webview.addEventListener('page-favicon-updated', onFavicon)
+    webview.addEventListener('dom-ready', onDomReady)
+
+    return () => {
+      webview.removeEventListener('did-navigate', syncNavState)
+      webview.removeEventListener('did-navigate-in-page', syncNavState)
+      webview.removeEventListener('did-finish-load', syncNavState)
+      webview.removeEventListener('page-title-updated', onTitle)
+      webview.removeEventListener('page-favicon-updated', onFavicon)
+      webview.removeEventListener('dom-ready', onDomReady)
+    }
+  }, [nonce, safeUrl])
+
+  useEffect(() => {
+    domReadyRef.current = false
+    setCanGoBack(false)
+    setCanGoForward(false)
+  }, [nonce, safeUrl])
+
+  return (
+    <section className="tab-pane browser-tab">
+      <div className="browser-frame">
+        <webview
+          className="browser-webview"
+          key={`${tab.id}-${nonce}`}
+          ref={(node) => {
+            viewRef.current = node
+          }}
+          src={safeUrl}
+          partition="persist:opensmith-browser"
+          style={{ width: '100%', height: '100%' }}
+        />
+      </div>
+
+      <footer className="pane-head py-2 gap-2 px-3 bg-black/26 backdrop-blur-2xl shadow-[inset_0_1px_0_0_rgba(255,255,255,0.05)] [-webkit-app-region:no-drag]">
+        <div className="inline-flex items-center gap-0.5 shrink-0">
+          <button
+            className="size-8 rounded-md border border-transparent bg-transparent text-[#d0d0d0] inline-flex items-center justify-center hover:bg-white/10 disabled:opacity-45 disabled:hover:bg-transparent transition-colors"
+            onClick={() => {
+              withReadyWebview((webview) => {
+                if (webview.canGoBack()) {
+                  webview.goBack()
+                }
+              })
+            }}
+            disabled={!canGoBack}
+            aria-label="Back"
+          >
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.9" className="size-4">
+              <path d="M12.5 4.5 7 10l5.5 5.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+          <button
+            className="size-8 rounded-md border border-transparent bg-transparent text-[#d0d0d0] inline-flex items-center justify-center hover:bg-white/10 disabled:opacity-45 disabled:hover:bg-transparent transition-colors"
+            onClick={() => {
+              withReadyWebview((webview) => {
+                if (webview.canGoForward()) {
+                  webview.goForward()
+                }
+              })
+            }}
+            disabled={!canGoForward}
+            aria-label="Forward"
+          >
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.9" className="size-4">
+              <path d="M7.5 4.5 13 10l-5.5 5.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+          <button
+            className="size-8 rounded-md border border-transparent bg-transparent text-[#d0d0d0] inline-flex items-center justify-center hover:bg-white/10 disabled:opacity-45 disabled:hover:bg-transparent transition-colors"
+            onClick={() => {
+              const reloaded = withReadyWebview((webview) => {
+                webview.reloadIgnoringCache()
+                return true
+              })
+              if (!reloaded) {
+                setNonce((value) => value + 1)
+              }
+            }}
+            aria-label="Refresh"
+          >
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.9" className="size-4">
+              <path d="M15.4 10A5.4 5.4 0 1 1 14 6.2" strokeLinecap="round" />
+              <path d="M15.2 3.8v2.7h-2.7" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="flex-1 min-w-0 flex items-center gap-2 rounded-[12px] border border-white/10 bg-black/30 px-3 backdrop-blur-lg focus-within:border-white/20">
+          <input
+            className="bg-transparent border-0 outline-none h-9 px-0 rounded-none text-[#e5e5e5] placeholder:text-[#7f7f7f] w-full"
+            value={urlInput}
+            onChange={(event) => setUrlInput(event.target.value)}
+            onBlur={commitUrl}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                commitUrl()
+              }
+            }}
+            placeholder="Search or enter address"
+          />
+        </div>
+      </footer>
+    </section>
+  )
+}
