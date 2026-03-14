@@ -579,6 +579,33 @@ async function requestViaOpenCodeAcp(parsed, provider, emitEvent = () => {}) {
   const rpc = createJsonRpcConnection(proc)
   let assistantText = ''
 
+  const pickToolTitle = (update) => {
+    const label =
+      update?.title ||
+      update?.toolName ||
+      update?.name ||
+      update?.tool?.name ||
+      update?.kind ||
+      'Tool call'
+    return typeof label === 'string' && label.trim().length > 0 ? label : 'Tool call'
+  }
+
+  const pickToolDetail = (update) => {
+    const candidates = [
+      update?.description,
+      update?.message,
+      update?.command,
+      update?.path,
+      update?.args && Array.isArray(update.args) ? update.args.join(' ') : null,
+      update?.toolInput && typeof update.toolInput === 'object' ? JSON.stringify(update.toolInput) : null,
+    ]
+    const detail = candidates.find((value) => typeof value === 'string' && value.trim().length > 0)
+    if (!detail) {
+      return null
+    }
+    return detail.length > 180 ? `${detail.slice(0, 180)}...` : detail
+  }
+
   const stopListening = rpc.onNotification((msg) => {
     if (msg.method !== 'session/update') {
       return
@@ -600,7 +627,8 @@ async function requestViaOpenCodeAcp(parsed, provider, emitEvent = () => {}) {
         id: update?.toolCallId || null,
         status: update?.status || 'in_progress',
         kind: update?.kind || 'other',
-        title: update?.title || 'Tool call',
+        title: pickToolTitle(update),
+        detail: pickToolDetail(update),
       })
     }
   })
@@ -699,23 +727,11 @@ export async function requestAssistantReply(payload) {
     throw new Error('Provider not found')
   }
 
-  if (provider.kind === 'codex-app-server' || provider.id === 'codex-app-server') {
-    return requestViaCodexAppServer(parsed, provider)
+  if (provider.kind !== 'acp-opencode' && provider.id !== 'opencode-acp') {
+    throw new Error('Only OpenCode ACP is supported in this build.')
   }
 
-  if (provider.kind === 'copilot-sdk' || provider.id === 'copilot-sdk') {
-    return requestViaCopilotSdk(parsed, provider)
-  }
-
-  if (provider.kind === 'acp-opencode' || provider.id === 'opencode-acp') {
-    return requestViaOpenCodeAcp(parsed, provider)
-  }
-
-  const apiKey = getProviderSecret(provider.id)
-  if (!apiKey && !isLocalEndpoint(provider.endpoint)) {
-    throw new Error('Provider API key is missing')
-  }
-  return requestViaOpenAICompatible(parsed, provider, apiKey)
+  return requestViaOpenCodeAcp(parsed, provider)
 }
 
 export async function requestAssistantReplyStream(payload, emitEvent = () => {}) {
@@ -726,31 +742,11 @@ export async function requestAssistantReplyStream(payload, emitEvent = () => {})
     throw new Error('Provider not found')
   }
 
-  if (provider.kind === 'codex-app-server' || provider.id === 'codex-app-server') {
-    const reply = await requestViaCodexAppServer(parsed, provider, emitEvent)
-    return reply
+  if (provider.kind !== 'acp-opencode' && provider.id !== 'opencode-acp') {
+    throw new Error('Only OpenCode ACP is supported in this build.')
   }
 
-  if (provider.kind === 'copilot-sdk' || provider.id === 'copilot-sdk') {
-    const reply = await requestViaCopilotSdk(parsed, provider, emitEvent)
-    return reply
-  }
-
-  if (provider.kind === 'acp-opencode' || provider.id === 'opencode-acp') {
-    const reply = await requestViaOpenCodeAcp(parsed, provider, emitEvent)
-    return reply
-  }
-
-  const apiKey = getProviderSecret(provider.id)
-  if (!apiKey && !isLocalEndpoint(provider.endpoint)) {
-    throw new Error('Provider API key is missing')
-  }
-
-  const reply = await requestViaOpenAICompatible(parsed, provider, apiKey)
-  if (typeof reply?.content === 'string' && reply.content.length > 0) {
-    emitEvent({ type: 'text-delta', delta: reply.content })
-  }
-  return reply
+  return requestViaOpenCodeAcp(parsed, provider, emitEvent)
 }
 
 async function listCodexModels(cwd) {
@@ -823,6 +819,11 @@ async function listOpenCodeAcpModels(cwd) {
       .map((item) => ({
         id: item?.modelId,
         label: item?.name || item?.modelId,
+        contextWindow:
+          item?.contextWindow ||
+          item?.contextWindowTokens ||
+          item?.maxInputTokens ||
+          null,
       }))
       .filter((item) => Boolean(item.id))
   } finally {
@@ -925,55 +926,18 @@ export async function listAssistantModels(payload) {
     throw new Error('Provider not found')
   }
 
-  if (provider.kind === 'codex-app-server' || provider.id === 'codex-app-server') {
-    try {
-      const models = await listCodexModels(cwd)
-      if (models.length > 0) {
-        return models
-      }
-    } catch {
-      // Fall through to provider default.
-    }
-    return [{ id: provider.model, label: provider.model }]
-  }
-
-  if (provider.kind === 'copilot-sdk' || provider.id === 'copilot-sdk') {
-    try {
-      const models = await listCopilotModels()
-      if (models.length > 0) {
-        return models
-      }
-    } catch {
-      // Fall through to provider default.
-    }
-
-    const defaults = ['gpt-4.1', provider.model]
-    return Array.from(new Set(defaults.filter(Boolean))).map((model) => ({ id: model, label: model }))
-  }
-
-  if (provider.kind === 'acp-opencode' || provider.id === 'opencode-acp') {
-    try {
-      const models = await listOpenCodeAcpModels(cwd)
-      if (models.length > 0) {
-        return models
-      }
-    } catch {
-      // Fall through to provider default.
-    }
-    return [{ id: provider.model, label: provider.model }]
+  if (provider.kind !== 'acp-opencode' && provider.id !== 'opencode-acp') {
+    throw new Error('Only OpenCode ACP is supported in this build.')
   }
 
   try {
-    const apiKey = getProviderSecret(provider.id)
-    if (apiKey || isLocalEndpoint(provider.endpoint)) {
-      const models = await listOpenAICompatibleModels(provider, apiKey)
-      if (models.length > 0) {
-        return models
-      }
+    const models = await listOpenCodeAcpModels(cwd)
+    if (models.length > 0) {
+      return models
     }
   } catch {
     // Fall through to provider default.
   }
 
-  return [{ id: provider.model, label: provider.model }]
+  return [{ id: provider.model, label: provider.model, contextWindow: null }]
 }

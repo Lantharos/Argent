@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react'
 import type { ProviderConfig } from '../../types/opensmith'
-import { createId } from '../../state/ids'
 
 type Props = {
   providers: ProviderConfig[]
@@ -9,11 +8,11 @@ type Props = {
 }
 
 const EMPTY = {
-  id: '',
-  label: '',
-  kind: 'openai-compatible' as const,
-  model: '',
-  endpoint: '',
+  id: 'opencode-acp',
+  label: 'OpenCode ACP',
+  kind: 'acp-opencode' as const,
+  model: 'opencode/big-pickle',
+  endpoint: 'stdio://opencode-acp',
   headers: {} as Record<string, string>,
   apiKey: '',
 }
@@ -24,7 +23,7 @@ export function ProviderPanel({ providers, onUpsert, onRemove }: Props) {
   const [headerValue, setHeaderValue] = useState('')
 
   const canSave = useMemo(() => {
-    return draft.label.length > 1 && draft.model.length > 0 && draft.endpoint.startsWith('http')
+    return draft.label.length > 1 && draft.model.length > 0 && draft.endpoint.length > 0
   }, [draft])
 
   async function save() {
@@ -34,7 +33,7 @@ export function ProviderPanel({ providers, onUpsert, onRemove }: Props) {
 
     await onUpsert({
       ...draft,
-      id: draft.id || createId('provider'),
+      id: 'opencode-acp',
     })
 
     setDraft(EMPTY)

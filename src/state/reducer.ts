@@ -19,6 +19,37 @@ function updateSpace(state: AppSnapshot, spaceId: string, updater: (space: AppSp
   }
 }
 
+function findLastUsedAiSettings(state: AppSnapshot, activeSpaceId: string) {
+  const activeSpace = state.spaces.find((space) => space.id === activeSpaceId)
+  if (activeSpace) {
+    const activeTab = activeSpace.tabs.find((tab) => tab.id === activeSpace.activeTabId)
+    if (activeTab?.type === 'ai') {
+      return {
+        model: activeTab.model,
+        providerId: activeTab.providerId,
+      }
+    }
+  }
+
+  for (let spaceIndex = state.spaces.length - 1; spaceIndex >= 0; spaceIndex -= 1) {
+    const space = state.spaces[spaceIndex]
+    for (let tabIndex = space.tabs.length - 1; tabIndex >= 0; tabIndex -= 1) {
+      const tab = space.tabs[tabIndex]
+      if (tab.type === 'ai' && (tab.model || tab.providerId)) {
+        return {
+          model: tab.model,
+          providerId: tab.providerId,
+        }
+      }
+    }
+  }
+
+  return {
+    model: null,
+    providerId: 'opencode-acp',
+  }
+}
+
 export function appReducer(state: AppSnapshot, action: Action): AppSnapshot {
   if (action.type === 'replace') {
     return action.value
@@ -42,10 +73,20 @@ export function appReducer(state: AppSnapshot, action: Action): AppSnapshot {
   if (action.type === 'add-tab') {
     return updateSpace(state, action.spaceId, (space) => {
       const tab = createTab(action.tabType, space.rootPath)
+      const aiDefaults = findLastUsedAiSettings(state, action.spaceId)
+      const nextTab =
+        tab.type === 'ai'
+          ? {
+              ...tab,
+              providerId: aiDefaults.providerId || 'opencode-acp',
+              model: aiDefaults.model,
+            }
+          : tab
+
       return {
         ...space,
-        tabs: [...space.tabs, tab],
-        activeTabId: tab.id,
+        tabs: [...space.tabs, nextTab],
+        activeTabId: nextTab.id,
       }
     })
   }

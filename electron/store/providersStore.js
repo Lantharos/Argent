@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process'
 import { safeStorage } from 'electron'
 import { getProvidersPath, getSecretsPath } from './paths.js'
 
-const BUILTIN_PROVIDER_IDS = new Set(['codex-app-server', 'copilot-sdk', 'opencode-acp'])
+const BUILTIN_PROVIDER_IDS = new Set(['opencode-acp'])
 
 function commandExists(command) {
   const checker = process.platform === 'win32' ? 'where' : 'which'
@@ -16,30 +16,6 @@ function commandExists(command) {
 
 function detectBuiltinProviders() {
   const providers = []
-
-  if (commandExists('codex')) {
-    providers.push({
-      id: 'codex-app-server',
-      label: 'Codex App Server',
-      kind: 'codex-app-server',
-      model: 'gpt-5.1-codex',
-      endpoint: 'http://127.0.0.1:4141/v1',
-      headers: {},
-      source: 'detected',
-    })
-  }
-
-  if (commandExists('copilot')) {
-    providers.push({
-      id: 'copilot-sdk',
-      label: 'GitHub Copilot SDK',
-      kind: 'copilot-sdk',
-      model: 'gpt-4.1',
-      endpoint: 'http://127.0.0.1:4142/v1',
-      headers: {},
-      source: 'detected',
-    })
-  }
 
   if (commandExists('opencode')) {
     providers.push({
@@ -98,7 +74,7 @@ export function listProviders() {
   const merged = new Map()
 
   for (const provider of savedProviders) {
-    if (BUILTIN_PROVIDER_IDS.has(provider.id)) {
+    if (BUILTIN_PROVIDER_IDS.has(provider.id) || provider.id !== 'opencode-acp') {
       continue
     }
     merged.set(provider.id, provider)

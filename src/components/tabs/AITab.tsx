@@ -30,7 +30,49 @@ type Props = {
   ) => Promise<string>
 }
 
-type ModelOption = { id: string; label: string }
+type ModelOption = { id: string; label: string; contextWindow?: number | null }
+
+const EFFORT_ORDER = ['base', 'thinking', 'low', 'medium', 'high', 'xhigh'] as const
+
+type EffortLevel = (typeof EFFORT_ORDER)[number]
+
+type ModelFamily = {
+  group: string
+  name: string
+  key: string
+  variants: Array<ModelOption & { effort: EffortLevel }>
+}
+
+function parseModelVariant(option: ModelOption) {
+  const label = (option.label || option.id).trim()
+
+  const parenthetical = label.match(/^(.*)\((thinking|low|medium|high|xhigh)\)\s*$/i)
+  if (parenthetical) {
+    return {
+      baseLabel: parenthetical[1].trim(),
+      effort: parenthetical[2].toLowerCase() as EffortLevel,
+    }
+  }
+
+  const suffix = label.match(/^(.*?)-(thinking|low|medium|high|xhigh)\s*$/i)
+  if (suffix) {
+    return {
+      baseLabel: suffix[1].trim(),
+      effort: suffix[2].toLowerCase() as EffortLevel,
+    }
+  }
+
+  return {
+    baseLabel: label,
+    effort: 'base' as EffortLevel,
+  }
+}
+
+function effortLabel(effort: EffortLevel) {
+  if (effort === 'base') return 'Base'
+  if (effort === 'xhigh') return 'X-High'
+  return effort[0].toUpperCase() + effort.slice(1)
+}
 
 function splitModelOption(option: ModelOption) {
   const label = option.label || option.id
@@ -81,8 +123,9 @@ function toolKindIcon(kind: string) {
   return <CircleDot className="h-3.5 w-3.5" />
 }
 
-function formatToolMessage(title: string, status: string, kind = 'other') {
-  return `[[tool]]${encodeURIComponent(title)}::${status}::${kind}`
+function formatToolMessage(title: string, status: string, kind = 'other', detail?: string | null) {
+  const encodedDetail = detail ? encodeURIComponent(detail) : ''
+  return `[[tool]]${encodeURIComponent(title)}::${status}::${kind}::${encodedDetail}`
 }
 
 function parseToolMessage(content: string) {
@@ -99,6 +142,7 @@ function parseToolMessage(content: string) {
   const encodedTitle = parts[0]
   const status = parts[1]
   const kind = parts[2] || 'other'
+  const encodedDetail = parts[3] || ''
 
   let title = encodedTitle
   try {
@@ -107,11 +151,46 @@ function parseToolMessage(content: string) {
     title = encodedTitle
   }
 
+  let detail: string | null = null
+  if (encodedDetail) {
+    try {
+      detail = decodeURIComponent(encodedDetail)
+    } catch {
+      detail = encodedDetail
+    }
+  }
+
   return {
     title,
     status,
     kind,
+    detail,
   }
+}
+
+function compactConversation(messages: { role: 'user' | 'assistant'; content: string }[]) {
+  if (messages.length <= 12) {
+    return messages
+  }
+
+  const tail = messages.slice(-10)
+  const head = messages.slice(0, -10)
+
+  const summary = head
+    .filter((msg) => msg.content.trim().length > 0)
+    .slice(-8)
+    .map((msg) => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content.replace(/\s+/g, ' ').trim()}`)
+    .join('\n')
+
+  if (!summary) {
+    return tail
+  }
+
+  return [
+    { role: 'user' as const, content: 'Previous conversation summary:' },
+    { role: 'assistant' as const, content: summary.length > 2200 ? `${summary.slice(0, 2200)}...` : summary },
+    ...tail,
+  ]
 }
 
 function summarizeTabTitleFromPrompt(input: string) {
@@ -125,12 +204,23 @@ function summarizeTabTitleFromPrompt(input: string) {
   return base || 'AI Chat'
 }
 
+function formatContextWindow(value: number | null) {
+  if (value == null || !Number.isFinite(value)) {
+    return null
+  }
+  if (value >= 1_000_000) {
+    return `${Math.round(value / 100_000) / 10}M ctx`
+  }
+  if (value >= 1_000) {
+    return `${Math.round(value / 100) / 10}k ctx`
+  }
+  return `${value} ctx`
+}
+
 export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
   const [loading, setLoading] = useState(false)
-  const [providerMenuOpen, setProviderMenuOpen] = useState(false)
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
   const [activeMetaPopover, setActiveMetaPopover] = useState<'local' | 'access' | null>(null)
-  const providerMenuRef = useRef<HTMLDivElement | null>(null)
   const modelMenuRef = useRef<HTMLDivElement | null>(null)
 
   const [modelOptions, setModelOptions] = useState<ModelOption[]>([])
@@ -154,29 +244,20 @@ export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
     onChangeRef.current = onChange
   }, [onChange])
 
-  const preferredProviders = useMemo(() => {
-    const codex = providers.find((provider) => provider.id === 'codex-app-server')
-    const copilot = providers.find((provider) => provider.id === 'copilot-sdk')
-    const opencodeAcp = providers.find((provider) => provider.id === 'opencode-acp')
-    const selected = [codex, copilot, opencodeAcp].filter((item): item is ProviderConfig => Boolean(item))
-    return selected.length > 0 ? selected : providers
-  }, [providers])
+  const selectedProvider = useMemo<ProviderConfig | null>(
+    () => providers.find((provider) => provider.id === 'opencode-acp') ?? null,
+    [providers],
+  )
 
-  const selectedProvider = useMemo(() => {
-    if (!tab.providerId) {
-      return preferredProviders.at(0) ?? null
-    }
-    return preferredProviders.find((provider) => provider.id === tab.providerId) ?? preferredProviders.at(0) ?? null
-  }, [preferredProviders, tab.providerId])
-
-  const selectedProviderLabel = selectedProvider?.label ?? 'Select provider'
+  const opencodeInstalled = Boolean(selectedProvider)
   const selectedModelValue = tab.model || selectedProvider?.model || null
 
   const selectedModelLabel = useMemo(() => {
-    const inState = modelOptions.find((item) => item.id === selectedModelValue)?.label
-    if (inState) {
-      return inState
+    const selectedOption = modelOptions.find((item) => item.id === selectedModelValue)
+    if (selectedOption?.label) {
+      return selectedOption.label
     }
+
     if (selectedProvider) {
       const cached = modelOptionsCacheRef.current[selectedProvider.id] ?? []
       const fromCache = cached.find((item) => item.id === selectedModelValue)?.label
@@ -184,43 +265,89 @@ export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
         return fromCache
       }
     }
+
     return selectedModelValue || 'Select model'
   }, [modelOptions, selectedProvider, selectedModelValue])
 
-  const groupedModels = useMemo(() => {
+  const groupedModelFamilies = useMemo(() => {
     const query = modelFilter.trim().toLowerCase()
-    const map = new Map<string, ModelOption[]>()
+    const map = new Map<string, ModelFamily>()
 
     for (const option of modelOptions) {
-      const split = splitModelOption(option)
-      const searchable = `${split.group} ${split.name} ${option.id}`.toLowerCase()
+      const variant = parseModelVariant(option)
+      const split = splitModelOption({ ...option, label: variant.baseLabel })
+      const searchable = `${split.group} ${split.name} ${variant.effort} ${option.id}`.toLowerCase()
       if (query && !searchable.includes(query)) {
         continue
       }
 
-      if (!map.has(split.group)) {
-        map.set(split.group, [])
+      const key = `${split.group}::${split.name}`
+      if (!map.has(key)) {
+        map.set(key, {
+          group: split.group,
+          name: split.name,
+          key,
+          variants: [],
+        })
       }
-      map.get(split.group)?.push(option)
+
+      map.get(key)?.variants.push({ ...option, effort: variant.effort })
     }
 
-    return Array.from(map.entries())
-      .map(([group, options]) => ({
+    const families = Array.from(map.values()).map((family) => ({
+      ...family,
+      variants: [...family.variants].sort((a, b) => {
+        const aIndex = EFFORT_ORDER.indexOf(a.effort)
+        const bIndex = EFFORT_ORDER.indexOf(b.effort)
+        if (aIndex !== bIndex) {
+          return aIndex - bIndex
+        }
+        return a.label.localeCompare(b.label)
+      }),
+    }))
+
+    const grouped = new Map<string, ModelFamily[]>()
+    for (const family of families) {
+      if (!grouped.has(family.group)) {
+        grouped.set(family.group, [])
+      }
+      grouped.get(family.group)?.push(family)
+    }
+
+    return Array.from(grouped.entries())
+      .map(([group, familiesInGroup]) => ({
         group,
-        options: [...options].sort((a, b) => a.label.localeCompare(b.label)),
+        families: [...familiesInGroup].sort((a, b) => a.name.localeCompare(b.name)),
       }))
       .sort((a, b) => a.group.localeCompare(b.group))
   }, [modelOptions, modelFilter])
 
+  const selectedModelContextWindow = useMemo(() => {
+    const direct = modelOptions.find((item) => item.id === selectedModelValue)?.contextWindow
+    if (typeof direct === 'number' && Number.isFinite(direct)) {
+      return direct
+    }
+
+    if (selectedProvider) {
+      const cached = modelOptionsCacheRef.current[selectedProvider.id] ?? []
+      const fromCache = cached.find((item) => item.id === selectedModelValue)?.contextWindow
+      if (typeof fromCache === 'number' && Number.isFinite(fromCache)) {
+        return fromCache
+      }
+    }
+
+    return null
+  }, [modelOptions, selectedProvider, selectedModelValue])
+
   useEffect(() => {
     setCollapsedGroups((prev) => {
       const next: Record<string, boolean> = {}
-      for (const section of groupedModels) {
+      for (const section of groupedModelFamilies) {
         next[section.group] = prev[section.group] ?? false
       }
       return next
     })
-  }, [groupedModels])
+  }, [groupedModelFamilies])
 
   const lastAssistantTextIndex = useMemo(() => {
     if (tab.messages.length === 0) {
@@ -325,7 +452,7 @@ export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
         updateTab((current) => {
           const messages = [...current.messages]
           const existingIndex = toolMessageIndexByIdRef.current[toolId]
-          const content = formatToolMessage(event.title, event.status, event.kind || 'other')
+          const content = formatToolMessage(event.title, event.status, event.kind || 'other', event.detail)
 
           if (typeof existingIndex === 'number' && existingIndex >= 0 && existingIndex < messages.length) {
             messages[existingIndex] = {
@@ -357,7 +484,7 @@ export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
             if (msg.role === 'assistant') {
               const tool = parseToolMessage(msg.content)
               if (tool && (tool.status === 'in_progress' || tool.status === 'pending')) {
-                return { ...msg, content: formatToolMessage(tool.title, 'failed', tool.kind) }
+                return { ...msg, content: formatToolMessage(tool.title, 'failed', tool.kind, tool.detail) }
               }
             }
             return msg
@@ -378,7 +505,7 @@ export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
             if (msg.role === 'assistant') {
               const tool = parseToolMessage(msg.content)
               if (tool && (tool.status === 'in_progress' || tool.status === 'pending')) {
-                return { ...msg, content: formatToolMessage(tool.title, 'completed', tool.kind) }
+                return { ...msg, content: formatToolMessage(tool.title, 'completed', tool.kind, tool.detail) }
               }
             }
             return msg
@@ -404,13 +531,9 @@ export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
       if (!target) {
         return
       }
-      if (providerMenuRef.current?.contains(target)) {
-        return
-      }
       if (modelMenuRef.current?.contains(target)) {
         return
       }
-      setProviderMenuOpen(false)
       setModelMenuOpen(false)
       setActiveMetaPopover(null)
     }
@@ -427,7 +550,7 @@ export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
       }
 
       const providerId = selectedProvider.id
-      const fallback = [{ id: selectedProvider.model, label: selectedProvider.model }]
+      const fallback = [{ id: selectedProvider.model, label: selectedProvider.model, contextWindow: null }]
       const cached = modelOptionsCacheRef.current[providerId]
       if (cached && cached.length > 0) {
         setModelOptions(cached)
@@ -498,7 +621,7 @@ export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
       if (msg.role === 'assistant') {
         const tool = parseToolMessage(msg.content)
         if (tool && (tool.status === 'in_progress' || tool.status === 'pending')) {
-          return { ...msg, content: formatToolMessage(tool.title, 'completed', tool.kind) }
+          return { ...msg, content: formatToolMessage(tool.title, 'completed', tool.kind, tool.detail) }
         }
       }
       return msg
@@ -509,6 +632,12 @@ export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
     const nextTitle = shouldRetitle ? summarizeTabTitleFromPrompt(input) : current.title
 
     const withUser: AITabData['messages'] = [...cleanMessages, { role: 'user', content: input }]
+    const compacted = compactConversation(
+      withUser.filter(
+        (msg): msg is { role: 'user' | 'assistant'; content: string } =>
+          (msg.role === 'user' || msg.role === 'assistant') && msg.content.length > 0,
+      ),
+    )
 
     updateTab((prev) => ({
       ...prev,
@@ -524,7 +653,7 @@ export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
     isAutoScrolling.current = true
 
     try {
-      const usable = withUser.filter(
+      const usable = compacted.filter(
         (msg): msg is { role: 'user' | 'assistant'; content: string } =>
           (msg.role === 'user' || msg.role === 'assistant') && msg.content.length > 0,
       )
@@ -539,7 +668,7 @@ export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
       activeRequestIdRef.current = streamStart.requestId
     } catch {
       try {
-        const usable = withUser.filter(
+        const usable = compacted.filter(
           (msg): msg is { role: 'user' | 'assistant'; content: string } =>
             msg.role === 'user' || msg.role === 'assistant',
         )
@@ -571,6 +700,14 @@ export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
         onScroll={handleScroll}
         className="flex flex-1 min-h-0 flex-col gap-3 overflow-auto px-5 md:px-12 lg:px-24 pt-5 pb-56 [-webkit-app-region:no-drag]"
       >
+        {!opencodeInstalled ? (
+          <div className="w-full max-w-[760px] mx-auto mt-8 rounded-2xl border border-[#3a2f21] bg-[#1a140e] px-4 py-3 text-[#d6b796]">
+            <div className="text-[14px] font-semibold text-[#e8c89f]">OpenCode CLI required</div>
+            <p className="mt-1 mb-0 text-[13px] text-[#d2b08a]">Install OpenCode CLI and ensure `opencode` is available in PATH. Then restart OpenSmith.</p>
+            <p className="mt-1 mb-0 text-[12px] text-[#b8926f]">Command: `bun add -g opencode-ai` or your preferred install method from opencode.ai/docs.</p>
+          </div>
+        ) : null}
+
         {tab.messages.length === 0 ? (
           <div className="w-full max-w-[760px] mx-auto mt-10 md:mt-16 px-2 text-center">
             <h2 className="m-0 text-[30px] leading-tight font-semibold tracking-tight text-[#efefef]">What do you want to build?</h2>
@@ -591,11 +728,14 @@ export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
             if (toolData) {
               return (
                 <div key={index} className="mr-auto w-full max-w-full py-0.5">
-                  <div className="flex max-w-full items-center gap-2.5 py-1 text-[13px]">
+                  <div className="flex max-w-full items-start gap-2.5 py-1 text-[13px]">
                     <span className="text-[#8bb4ff] flex shrink-0 items-center justify-center">
                       {toolKindIcon(toolData.kind)}
                     </span>
-                    <span className="truncate text-[#cccccc]">{toolData.title}</span>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-[#cccccc]">{toolData.title}</div>
+                      {toolData.detail ? <div className="truncate text-[11px] text-[#7d7d7d]">{toolData.detail}</div> : null}
+                    </div>
                     <span className={`text-[12px] flex items-center gap-1.5 ${
                       toolData.status === 'failed' ? 'text-red-400' :
                       toolData.status === 'in_progress' ? 'text-blue-400' :
@@ -616,7 +756,7 @@ export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
             className={
               message.role === 'user'
                 ? 'py-1 border-none ml-auto bg-white/12 shadow-sm ring-1 ring-white/10 rounded-2xl px-4 py-2.5 text-white max-w-[75%] whitespace-pre-wrap'
-                : 'py-1 px-0 border-none mr-auto bg-transparent text-[#b6b6b6] flex-1 w-full max-w-full'
+                : 'py-1 px-0 border-none mr-auto bg-transparent text-[#b6b6b6] w-full max-w-full'
             }
           >
             {message.role === 'assistant' ? (
@@ -637,7 +777,7 @@ export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
         ))}
 
         {loading && lastAssistantTextIndex === -1 ? (
-          <div className="py-1 px-0 border-none mr-auto bg-transparent text-[#b6b6b6] flex-1 w-full max-w-full">
+          <div className="py-1 px-0 border-none mr-auto bg-transparent text-[#b6b6b6] w-full max-w-full">
             <span className="inline-block animate-pulse text-[#f0f0f0]">▌</span>
           </div>
         ) : null}
@@ -659,7 +799,7 @@ export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
               className="w-full bg-transparent outline-none border-0 resize-none text-[15px] text-[#ebebeb] placeholder:text-[#7f7f7f] pt-2.5 pb-[6px] px-1 min-h-[72px] max-h-72 overflow-auto"
               value={tab.input}
               onChange={(event) => updateTab((current) => ({ ...current, input: event.target.value }))}
-              placeholder="Ask OpenSmith anything, @ to add files, / for commands"
+              placeholder={opencodeInstalled ? 'Ask OpenSmith anything, @ to add files, / for commands' : 'Install OpenCode CLI to enable AI chat'}
               rows={3}
             />
           </div>
@@ -669,37 +809,6 @@ export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
               <button type="button" className="bg-transparent hover:bg-white/8 text-[#b8b8b8] transition rounded-full p-1.5 outline-none" onClick={addFileContext} aria-label="Add file">
                 <Plus className="h-4 w-4" />
               </button>
-
-              <div className="relative" ref={providerMenuRef}>
-                <button
-                  type="button"
-                  className="rounded-lg border border-[#383838] bg-[#1a1a1a] px-2 py-1.5 text-sm text-[#d7d7d7] outline-none focus:border-[#5c5c5c] inline-flex items-center gap-1.5 min-w-[220px] justify-between"
-                  onClick={() => setProviderMenuOpen((prev) => !prev)}
-                  aria-haspopup="listbox"
-                  aria-expanded={providerMenuOpen}
-                >
-                  <span className="truncate">{selectedProviderLabel}</span>
-                  <ChevronDown className="h-3.5 w-3.5" />
-                </button>
-
-                {providerMenuOpen ? (
-                  <div className="absolute left-0 bottom-[calc(100%+8px)] min-w-[260px] rounded-xl border border-[#363636] bg-[#181818] p-1.5 shadow-[0_16px_40px_rgba(0,0,0,0.45)] z-40" role="listbox">
-                    {preferredProviders.map((provider) => (
-                      <button
-                        key={provider.id}
-                        type="button"
-                        className={`w-full text-left rounded-lg px-3 py-2 text-sm transition-colors ${selectedProvider?.id === provider.id ? 'bg-[#2f2f2f] text-[#efefef]' : 'text-[#c4c4c4] hover:bg-[#2a2a2a]'}`}
-                        onClick={() => {
-                          updateTab((current) => ({ ...current, providerId: provider.id, model: null }))
-                          setProviderMenuOpen(false)
-                        }}
-                      >
-                        {provider.label}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
 
               <div className="relative" ref={modelMenuRef}>
                 <button
@@ -725,10 +834,10 @@ export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
                     </div>
 
                     <div className="max-h-[340px] overflow-auto px-1 pb-1">
-                      {groupedModels.length === 0 ? (
+                      {groupedModelFamilies.length === 0 ? (
                         <div className="px-3 py-2 text-xs text-[#888888]">No models found</div>
                       ) : (
-                        groupedModels.map((section) => {
+                        groupedModelFamilies.map((section) => {
                           const isCollapsed = collapsedGroups[section.group] ?? false
                           return (
                             <div key={section.group} className="mb-1">
@@ -747,20 +856,47 @@ export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
                               </button>
 
                               {!isCollapsed ? (
-                                <div className="mt-1 grid gap-0.5">
-                                  {section.options.map((model) => (
-                                    <button
-                                      key={model.id}
-                                      type="button"
-                                      className={`w-full text-left rounded-lg px-3 py-2 text-sm transition-colors ${selectedModelValue === model.id ? 'bg-[#2f2f2f] text-[#efefef]' : 'text-[#c4c4c4] hover:bg-[#2a2a2a]'}`}
-                                      onClick={() => {
-                                        updateTab((current) => ({ ...current, model: model.id }))
-                                        setModelMenuOpen(false)
-                                      }}
-                                    >
-                                      {splitModelOption(model).name}
-                                    </button>
-                                  ))}
+                                <div className="mt-1 grid gap-1">
+                                  {section.families.map((family) => {
+                                    const selectedVariant = family.variants.find((item) => item.id === selectedModelValue) || family.variants[0]
+                                    return (
+                                      <div
+                                        key={family.key}
+                                        className={`w-full rounded-lg px-3 py-2 text-sm transition-colors ${selectedVariant?.id === selectedModelValue ? 'bg-[#2f2f2f] text-[#efefef]' : 'text-[#c4c4c4] hover:bg-[#2a2a2a]'}`}
+                                      >
+                                        <div className="flex items-center justify-between gap-2">
+                                          <button
+                                            type="button"
+                                            className="truncate text-left"
+                                            onClick={() => {
+                                              if (!selectedVariant) return
+                                              updateTab((current) => ({ ...current, model: selectedVariant.id }))
+                                              setModelMenuOpen(false)
+                                            }}
+                                          >
+                                            {family.name}
+                                          </button>
+
+                                          {family.variants.length > 1 ? (
+                                            <div className="flex items-center gap-1">
+                                              {family.variants.map((variant) => (
+                                                <button
+                                                  key={variant.id}
+                                                  type="button"
+                                                  className={`rounded-md border px-1.5 py-0.5 text-[10px] ${selectedModelValue === variant.id ? 'border-[#6e6e6e] bg-[#3a3a3a] text-[#efefef]' : 'border-[#3d3d3d] bg-[#242424] text-[#9f9f9f] hover:bg-[#2b2b2b]'}`}
+                                                  onClick={() => {
+                                                    updateTab((current) => ({ ...current, model: variant.id }))
+                                                  }}
+                                                >
+                                                  {effortLabel(variant.effort)}
+                                                </button>
+                                              ))}
+                                            </div>
+                                          ) : null}
+                                        </div>
+                                      </div>
+                                    )
+                                  })}
                                 </div>
                               ) : null}
                             </div>
@@ -774,6 +910,12 @@ export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
             </div>
 
             <div className="flex items-center gap-1.5">
+              {formatContextWindow(selectedModelContextWindow) ? (
+                <span className="text-xs text-[#b5b5b5] inline-flex items-center gap-1 rounded-full border border-[#3a3a3a] bg-[#1b1b1b] px-2 py-1">
+                  {formatContextWindow(selectedModelContextWindow)}
+                </span>
+              ) : null}
+
               <div className="relative">
                 <button
                   type="button"
@@ -809,7 +951,7 @@ export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
               <button
                 className="bg-[#b0b0b0] text-[#151515] hover:bg-[#c8c8c8] transition rounded-full size-9 flex items-center justify-center text-base font-semibold disabled:opacity-45 disabled:hover:bg-[#b0b0b0]"
                 type="submit"
-                disabled={loading || !selectedProvider || tab.input.trim().length === 0}
+                disabled={loading || !opencodeInstalled || tab.input.trim().length === 0}
               >
                 {loading ? (
                   <CircleDot className="h-4 w-4 animate-pulse" />

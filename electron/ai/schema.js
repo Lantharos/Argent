@@ -3,7 +3,7 @@ import { z } from 'zod'
 export const providerSchema = z.object({
   id: z.string().min(2),
   label: z.string().min(2),
-  kind: z.enum(['openai-compatible', 'codex-app-server', 'copilot-sdk', 'acp-opencode']),
+  kind: z.enum(['acp-opencode']),
   model: z.string().min(1),
   endpoint: z.string().url(),
   headers: z.record(z.string(), z.string()).default({}),

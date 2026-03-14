@@ -12,14 +12,6 @@ OpenSmith is an Electron-based IDE that brings together code editing, terminal, 
 - **Terminal Tab** - Integrated terminal powered by xterm.js
 - **Browser Tab** - Built-in web browser for documentation and research
 
-### Multi-Provider AI Support
-OpenSmith isn't tied to a single AI provider. Use whatever works best for you:
-
-- **GitHub Copilot** - Official Copilot integration via `@github/copilot-sdk`
-- **OpenAI Codex** - Native integration with OpenAI's Codex CLI
-- **OpenCode ACP** - Integration with OpenCode's ACP protocol
-- **OpenAI Compatible** - Connect to any OpenAI-compatible API (OpenAI, Anthropic, Google, local models, etc.)
-
 ### Modern Architecture
 - **Electron** - Cross-platform desktop app foundation
 - **React 19** - UI framework with latest features

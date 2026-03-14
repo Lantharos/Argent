@@ -1,4 +1,4 @@
-export type ProviderKind = 'openai-compatible' | 'codex-app-server' | 'copilot-sdk' | 'acp-opencode'
+export type ProviderKind = 'acp-opencode'
 
 export type ProviderConfig = {
   id: string
@@ -32,6 +32,7 @@ export type AIStreamEvent =
       status: 'pending' | 'in_progress' | 'completed' | 'failed' | string
       kind?: string
       title: string
+      detail?: string | null
     }
   | { type: 'done'; reply: AIReply }
   | { type: 'error'; message: string }
@@ -123,7 +124,7 @@ declare global {
           temperature?: number
           cwd?: string
         }) => Promise<{ requestId: string }>
-        listModels: (payload: { providerId: string; cwd?: string }) => Promise<Array<{ id: string; label: string }>>
+        listModels: (payload: { providerId: string; cwd?: string }) => Promise<Array<{ id: string; label: string; contextWindow?: number | null }>>
         onStreamEvent: (callback: (payload: { requestId: string; event: AIStreamEvent }) => void) => () => void
       }
       terminal: {
