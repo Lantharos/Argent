@@ -66,10 +66,6 @@ function createMainWindow() {
     win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'))
   }
 
-  if (isDev) {
-    win.webContents.openDevTools({ mode: 'detach' })
-  }
-
   return win
 }
 

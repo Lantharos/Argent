@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useReducer, useState } from 'react'
+import { Loader2 } from 'lucide-react'
 import type { AppSnapshot, AppTab, AppTabType, ProviderConfig } from './types/opensmith'
 import { appReducer } from './state/reducer'
 import { defaultSnapshot, createSpace } from './state/snapshot'
@@ -79,11 +80,21 @@ function App() {
   }
 
   if (!loaded) {
-    return <div className="grid min-h-screen place-items-center bg-transparent text-[#9e9e9e] tracking-widest text-xs uppercase">Loading OpenSmith...</div>
+    return (
+      <div className="grid min-h-screen place-items-center bg-transparent">
+        <Loader2 className="h-7 w-7 animate-spin text-[#cfcfcf]" aria-hidden="true" />
+      </div>
+    )
   }
 
   if (!bridgeReady) {
-    return <div className="grid min-h-screen place-items-center bg-transparent text-[#9e9e9e] tracking-widest text-xs uppercase">OpenSmith bridge unavailable. Start with desktop mode.</div>
+    return (
+      <div className="grid min-h-screen place-items-center bg-transparent">
+        <p className="text-center text-sm text-[#cfcfcf]">
+          It seems like the OpenSmith bridge is not available. Please make sure you are running this app within the OpenSmith environment.
+        </p>
+      </div>
+    )
   }
 
   return (
