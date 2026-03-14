@@ -248,6 +248,24 @@ function setupIpc() {
     return true
   })
 
+  ipcMain.handle('fs:delete', (_, targetPath) => {
+    try {
+      fs.rmSync(targetPath, { recursive: true, force: true })
+      return true
+    } catch {
+      return false
+    }
+  })
+
+  ipcMain.handle('fs:copy', (_, src, dest) => {
+    try {
+      fs.cpSync(src, dest, { recursive: true })
+      return true
+    } catch {
+      return false
+    }
+  })
+
   ipcMain.handle('fs:read-dir', (_, dirPath) => {
     try {
       const entries = fs.readdirSync(dirPath, { withFileTypes: true })

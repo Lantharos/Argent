@@ -17,9 +17,23 @@ type FileNode = {
   path: string
 }
 
-function FileTreeItem({ node, currentFilePath, onSelect }: { node: FileNode, currentFilePath?: string | null, onSelect: (node: FileNode) => void }) {
+type FileTreeItemProps = {
+  node: FileNode
+  currentFilePath?: string | null
+  onSelect: (node: FileNode) => void
+  onContextMenu: (e: React.MouseEvent, node: FileNode) => void
+  refreshCount: number
+}
+
+function FileTreeItem({ node, currentFilePath, onSelect, onContextMenu, refreshCount }: FileTreeItemProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [children, setChildren] = useState<FileNode[]>([])
+
+  useEffect(() => {
+    if (isOpen && node.isDirectory) {
+      window.opensmith.fs.readDir(node.path).then(setChildren)
+    }
+  }, [isOpen, refreshCount, node.path])
 
   const toggle = async () => {
     if (node.isDirectory) {
@@ -40,6 +54,11 @@ function FileTreeItem({ node, currentFilePath, onSelect }: { node: FileNode, cur
     <div className="select-none">
       <div 
         onClick={toggle}
+        onContextMenu={(e) => {
+          e.stopPropagation()
+          e.preventDefault()
+          onContextMenu(e, node)
+        }}
         className={`flex items-center gap-1.5 py-1 px-2 rounded cursor-pointer text-sm mb-0.5 transition-colors ${
           isSelected 
             ? 'bg-white/10 text-white' 
@@ -65,7 +84,7 @@ function FileTreeItem({ node, currentFilePath, onSelect }: { node: FileNode, cur
       {isOpen && node.isDirectory && children.length > 0 && (
         <div className="pl-3 ml-[7px] border-l border-white/5 mt-0.5">
           {children.map(child => (
-            <FileTreeItem key={child.path} node={child} currentFilePath={currentFilePath} onSelect={onSelect} />
+            <FileTreeItem key={child.path} node={child} currentFilePath={currentFilePath} onSelect={onSelect} onContextMenu={onContextMenu} refreshCount={refreshCount} />
           ))}
         </div>
       )}
@@ -76,9 +95,46 @@ function FileTreeItem({ node, currentFilePath, onSelect }: { node: FileNode, cur
 export function EditorTab({ tab, cwd, onChange }: Props) {
   const extensions = useMemo(() => [javascript({ jsx: true, typescript: true })], [])
   const [rootNodes, setRootNodes] = useState<FileNode[]>([])
+  const [refreshCount, setRefreshCount] = useState(0)
+  
+  const [menu, setMenu] = useState<{ x: number, y: number, node: FileNode | null } | null>(null)
+  const [clipboard, setClipboard] = useState<{ path: string, type: 'copy' } | null>(null)
 
   const isSidebarOpen = tab.sidebarOpen ?? true
   const fontSize = tab.fontSize ?? 14
+
+  useEffect(() => {
+    function handleClick() {
+      setMenu(null)
+    }
+    window.addEventListener('click', handleClick)
+    return () => window.removeEventListener('click', handleClick)
+  }, [])
+
+  function handleContextMenu(e: React.MouseEvent, node: FileNode) {
+    setMenu({ x: e.clientX, y: e.clientY, node })
+  }
+
+  async function handleCopy(node: FileNode) {
+    setClipboard({ path: node.path, type: 'copy' })
+    setMenu(null)
+  }
+
+  async function handleDelete(node: FileNode) {
+    await window.opensmith.fs.delete(node.path)
+    setRefreshCount(c => c + 1)
+    setMenu(null)
+  }
+
+  async function handlePaste(targetNode: FileNode | null) {
+    if (!clipboard) return
+    const destDir = targetNode?.isDirectory ? targetNode.path : (targetNode?.path.split(/[/\\]/).slice(0, -1).join('/') || cwd)
+    const fileName = clipboard.path.split(/[/\\]/).pop()!
+    const dest = `${destDir}/${fileName}`
+    await window.opensmith.fs.copy(clipboard.path, dest)
+    setRefreshCount(c => c + 1)
+    setMenu(null)
+  }
 
   function setSidebarOpen(open: boolean) {
     onChange({ ...tab, sidebarOpen: open })
@@ -108,7 +164,7 @@ export function EditorTab({ tab, cwd, onChange }: Props) {
     window.opensmith.fs.readDir(cwd).then(nodes => {
       setRootNodes(nodes)
     })
-  }, [cwd])
+  }, [cwd, refreshCount])
 
   async function handleSelectFile(node: FileNode) {
     if (node.isDirectory) return
@@ -155,10 +211,17 @@ export function EditorTab({ tab, cwd, onChange }: Props) {
     >
       {/* Sidebar */}
       {isSidebarOpen && (
-        <div className="w-64 shrink-0 flex flex-col bg-transparent border-r border-white/5">
+        <div 
+          className="w-64 shrink-0 flex flex-col bg-transparent border-r border-white/5 relative"
+          onContextMenu={(e) => {
+            if (e.target === e.currentTarget) {
+              handleContextMenu(e, { name: '', path: cwd, isDirectory: true })
+            }
+          }}
+        >
           <div className="flex-1 overflow-y-auto p-2 scrollbar-hide pt-4">
             {rootNodes.map(node => (
-              <FileTreeItem key={node.path} node={node} currentFilePath={tab.filePath} onSelect={handleSelectFile} />
+              <FileTreeItem key={node.path} node={node} currentFilePath={tab.filePath} onSelect={handleSelectFile} onContextMenu={handleContextMenu} refreshCount={refreshCount} />
             ))}
           </div>
         </div>
@@ -206,6 +269,34 @@ export function EditorTab({ tab, cwd, onChange }: Props) {
           </div>
         </div>
       </div>
+
+      {menu && (
+        <div 
+          className="fixed z-50 bg-[#181825] border border-white/10 rounded-md shadow-2xl py-1 w-48 text-[12px] text-[#cdd6f4]"
+          style={{ left: menu.x, top: menu.y }}
+        >
+          <button 
+            className="w-full text-left px-3 py-1.5 hover:bg-white/10 transition-colors" 
+            onClick={(e) => { e.stopPropagation(); handleCopy(menu.node!) }}
+          >
+            Copy
+          </button>
+          <button 
+            className={`w-full text-left px-3 py-1.5 transition-colors ${clipboard ? 'hover:bg-white/10' : 'text-white/30 cursor-not-allowed'}`} 
+            onClick={(e) => { e.stopPropagation(); handlePaste(menu.node) }}
+            disabled={!clipboard}
+          >
+            Paste
+          </button>
+          <div className="h-[1px] bg-white/5 my-1"></div>
+          <button 
+            className="w-full text-left px-3 py-1.5 hover:bg-red-500/20 text-red-400 transition-colors" 
+            onClick={(e) => { e.stopPropagation(); handleDelete(menu.node!) }}
+          >
+            Delete
+          </button>
+        </div>
+      )}
     </section>
   )
 }
