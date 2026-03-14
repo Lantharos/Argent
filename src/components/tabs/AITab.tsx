@@ -1239,7 +1239,7 @@ export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }
               <div className="relative">
                 <button
                   type="button"
-                  className="text-xs text-[#aaaaaa] inline-flex items-center gap-1 rounded-full border border-[#3a3a3a] bg-[#1b1b1b] px-2 py-1 hover:bg-[#242424] transition-colors"
+                  className="text-xs text-[#aaaaaa] inline-flex items-center gap-1 rounded-full px-2 py-1 hover:bg-[#242424] transition-colors"
                   onClick={() => setActiveMetaPopover((prev) => (prev === 'access' ? null : 'access'))}
                 >
                   <TriangleAlert className="h-3.5 w-3.5" />
