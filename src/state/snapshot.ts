@@ -13,6 +13,7 @@ export function createSpace(folderPath: string): AppSpace {
     tabs: [ai, browser],
     activeTabId: ai.id,
     secondaryTabId: browser.id,
+    tabHistory: [ai.id],
   }
 }
 

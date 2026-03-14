@@ -138,8 +138,16 @@ export function SpaceSidebar({
     setEditingTab(null)
   }
 
+  function signalUiInteraction() {
+    window.dispatchEvent(new Event('opensmith:ui-interaction'))
+  }
+
   return (
-    <aside className="w-[292px] flex-shrink-0 flex flex-col pt-3 pb-3 px-3 gap-3 bg-black/26 backdrop-blur-2xl shadow-[inset_-1px_0_0_0_rgba(255,255,255,0.05)]">
+    <aside
+      className="w-[292px] flex-shrink-0 flex flex-col pt-3 pb-3 px-3 gap-3 bg-black/26 backdrop-blur-2xl shadow-[inset_-1px_0_0_0_rgba(255,255,255,0.05)]"
+      onMouseDownCapture={signalUiInteraction}
+      onContextMenuCapture={signalUiInteraction}
+    >
       <div className="flex items-center justify-between px-2">
         <div className="text-sm font-semibold text-[#d0d0d0] tracking-wide">OpenSmith</div>
         <button className="text-[12px] text-[#9a9a9a] hover:text-[#e0e0e0] px-2 py-1 rounded-md cursor-pointer transition-colors hover:bg-white/8 outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-0" onClick={onAddSpace}>
@@ -174,6 +182,19 @@ export function SpaceSidebar({
               <div className="flex flex-col mt-1 mb-2 ml-4 pl-3 border-l border-white/12">
                 <button
                   className="flex items-center gap-2 px-2.5 py-1.5 text-[12.5px] rounded-md text-[#d7d7d7] bg-white/8 text-left truncate"
+                  onMouseDown={(event) => {
+                    if (event.button === 1) {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      onCloseTab(space.id, activeSpaceTab.id)
+                    }
+                  }}
+                  onAuxClick={(event) => {
+                    if (event.button === 1) {
+                      event.preventDefault()
+                      event.stopPropagation()
+                    }
+                  }}
                   onClick={() => {
                     onActivateSpace(space.id)
                     onSelectTab(space.id, activeSpaceTab.id)
@@ -219,6 +240,19 @@ export function SpaceSidebar({
                     ) : (
                       <button
                         className={`flex-1 flex items-center gap-2 px-2.5 py-1.5 text-[12.5px] rounded-md transition-colors text-left truncate ${isActive && space.activeTabId === tab.id ? 'text-[#e9e9e9] bg-white/12' : 'text-[#9a9a9a] hover:text-[#d7d7d7] hover:bg-white/8'}`}
+                        onMouseDown={(event) => {
+                          if (event.button === 1) {
+                            event.preventDefault()
+                            event.stopPropagation()
+                            onCloseTab(space.id, tab.id)
+                          }
+                        }}
+                        onAuxClick={(event) => {
+                          if (event.button === 1) {
+                            event.preventDefault()
+                            event.stopPropagation()
+                          }
+                        }}
                         onClick={() => {
                           onActivateSpace(space.id)
                           onSelectTab(space.id, tab.id)

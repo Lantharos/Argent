@@ -7,9 +7,11 @@ import { EditorTab } from '../components/tabs/EditorTab'
 type Props = {
   tab: AppTab
   isActive?: boolean
+  spaceId: string
   cwd: string
   providers: ProviderConfig[]
   updateTab: (next: AppTab) => void
+  openEditorFileInNewTab: (spaceId: string, afterTabId: string, filePath: string, content: string) => void
   sendAI: (
     providerId: string,
     messages: { role: 'user' | 'assistant'; content: string }[],
@@ -18,7 +20,7 @@ type Props = {
   ) => Promise<string>
 }
 
-export function TabRenderer({ tab, isActive = true, cwd, providers, updateTab, sendAI }: Props) {
+export function TabRenderer({ tab, isActive = true, spaceId, cwd, providers, updateTab, openEditorFileInNewTab, sendAI }: Props) {
   if (tab.type === 'ai') {
     return (
       <AITab
@@ -39,5 +41,13 @@ export function TabRenderer({ tab, isActive = true, cwd, providers, updateTab, s
     return <TerminalTab tab={tab} isActive={isActive} onChange={(next) => updateTab(next)} />
   }
 
-  return <EditorTab tab={tab} cwd={cwd} onChange={(next) => updateTab(next)} />
+  return (
+    <EditorTab
+      tab={tab}
+      cwd={cwd}
+      isActive={isActive}
+      onOpenInNewTab={(payload) => openEditorFileInNewTab(spaceId, tab.id, payload.filePath, payload.content)}
+      onChange={(next) => updateTab(next)}
+    />
+  )
 }

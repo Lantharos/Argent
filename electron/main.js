@@ -266,6 +266,15 @@ function setupIpc() {
     }
   })
 
+  ipcMain.handle('fs:move', (_, src, dest) => {
+    try {
+      fs.renameSync(src, dest)
+      return true
+    } catch {
+      return false
+    }
+  })
+
   ipcMain.handle('fs:read-dir', (_, dirPath) => {
     try {
       const entries = fs.readdirSync(dirPath, { withFileTypes: true })

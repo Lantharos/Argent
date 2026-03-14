@@ -13,6 +13,7 @@ type Props = {
   activeTab: AppTab | null
   providers: ProviderConfig[]
   onUpdateTab: (tab: AppTab) => void
+  onOpenEditorFileInNewTab: (spaceId: string, afterTabId: string, filePath: string, content: string) => void
   onSendAI: (
     providerId: string,
     messages: { role: 'user' | 'assistant'; content: string }[],
@@ -22,18 +23,22 @@ type Props = {
 }
 
 function RenderPanel({
+  spaceId,
   tab,
   isActive,
   cwd,
   providers,
   onUpdateTab,
+  onOpenEditorFileInNewTab,
   onSendAI,
 }: {
+  spaceId: string
   tab: AppTab
   isActive: boolean
   cwd: string
   providers: ProviderConfig[]
   onUpdateTab: (tab: AppTab) => void
+  onOpenEditorFileInNewTab: (spaceId: string, afterTabId: string, filePath: string, content: string) => void
   onSendAI: (
     providerId: string,
     messages: { role: 'user' | 'assistant'; content: string }[],
@@ -45,9 +50,11 @@ function RenderPanel({
     <TabRenderer
       tab={tab}
       isActive={isActive}
+      spaceId={spaceId}
       cwd={cwd}
       providers={providers}
       updateTab={onUpdateTab}
+      openEditorFileInNewTab={onOpenEditorFileInNewTab}
       sendAI={onSendAI}
     />
   )
@@ -58,6 +65,7 @@ export function Workspace({
   activeTab,
   providers,
   onUpdateTab,
+  onOpenEditorFileInNewTab,
   onSendAI,
 }: Props) {
   const [titlebarVisible, setTitlebarVisible] = useState(false)
@@ -201,11 +209,13 @@ export function Workspace({
                   aria-hidden={!isActive}
                 >
                   <RenderPanel
+                    spaceId={space.id}
                     tab={tab}
                     isActive={isActive}
                     cwd={space.rootPath}
                     providers={providers}
                     onUpdateTab={onUpdateTab}
+                    onOpenEditorFileInNewTab={onOpenEditorFileInNewTab}
                     onSendAI={onSendAI}
                   />
                 </div>

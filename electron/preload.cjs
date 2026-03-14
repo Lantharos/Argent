@@ -44,5 +44,6 @@ contextBridge.exposeInMainWorld('opensmith', {
     readDir: (dirPath) => ipcRenderer.invoke('fs:read-dir', dirPath),
     delete: (path) => ipcRenderer.invoke('fs:delete', path),
     copy: (src, dest) => ipcRenderer.invoke('fs:copy', src, dest),
+    move: (src, dest) => ipcRenderer.invoke('fs:move', src, dest),
   },
 })

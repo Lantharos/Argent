@@ -85,6 +85,7 @@ export type AppSpace = {
   tabs: AppTab[]
   activeTabId: string
   secondaryTabId: string | null
+  tabHistory?: string[]
 }
 
 export type AppSnapshot = {
@@ -144,6 +145,7 @@ declare global {
         readDir: (path: string) => Promise<{name: string, isDirectory: boolean, path: string}[]>
         delete: (path: string) => Promise<boolean>
         copy: (src: string, dest: string) => Promise<boolean>
+        move: (src: string, dest: string) => Promise<boolean>
       }
     }
   }

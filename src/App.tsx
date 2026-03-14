@@ -4,6 +4,7 @@ import type { AppSnapshot, AppTab, AppTabType, ProviderConfig } from './types/op
 import { appReducer } from './state/reducer'
 import { defaultSnapshot, createSpace } from './state/snapshot'
 import { getActiveSpace, getTab } from './state/selectors'
+import { createTab } from './state/tabFactory'
 import { EmptyState } from './components/layout/EmptyState'
 import { SpaceSidebar } from './components/layout/SpaceSidebar'
 import { Workspace } from './components/layout/Workspace'
@@ -67,6 +68,36 @@ function App() {
       tabId: tab.id,
       updater: () => tab,
     })
+  }
+
+  function openEditorFileInNewTab(spaceId: string, afterTabId: string, filePath: string, content: string) {
+    const space = state.spaces.find((item) => item.id === spaceId)
+    if (!space) {
+      return
+    }
+
+    const baseTab = createTab('editor', space.rootPath)
+    if (baseTab.type !== 'editor') {
+      return
+    }
+
+    const title = filePath.split(/[/\\]/).at(-1) ?? 'Editor'
+    const nextTab: AppTab = {
+      ...baseTab,
+      title,
+      filePath,
+      content,
+      dirty: false,
+    }
+
+    dispatch({
+      type: 'insert-tab-after',
+      spaceId,
+      afterTabId,
+      tab: nextTab,
+      activate: true,
+    })
+    dispatch({ type: 'set-active-space', spaceId })
   }
 
   async function sendAI(
@@ -138,6 +169,7 @@ function App() {
           activeTab={activeTab}
           providers={providers}
           onUpdateTab={updateTab}
+          onOpenEditorFileInNewTab={openEditorFileInNewTab}
           onSendAI={sendAI}
         />
       ) : (

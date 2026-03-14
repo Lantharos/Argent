@@ -6,6 +6,7 @@ type Action =
   | { type: 'add-space'; space: AppSpace }
   | { type: 'set-active-space'; spaceId: string }
   | { type: 'add-tab'; spaceId: string; tabType: AppTabType }
+  | { type: 'insert-tab-after'; spaceId: string; afterTabId: string; tab: AppTab; activate?: boolean }
   | { type: 'set-active-tab'; spaceId: string; tabId: string }
   | { type: 'reorder-tab'; spaceId: string; sourceTabId: string; targetTabId: string }
   | { type: 'set-secondary-tab'; spaceId: string; tabId: string | null }
@@ -16,6 +17,27 @@ function updateSpace(state: AppSnapshot, spaceId: string, updater: (space: AppSp
   return {
     ...state,
     spaces: state.spaces.map((space) => (space.id === spaceId ? updater(space) : space)),
+  }
+}
+
+function recordTabVisit(history: string[] | undefined, tabId: string): string[] {
+  const nextHistory = (history ?? []).filter((id) => id !== tabId)
+  nextHistory.push(tabId)
+  return nextHistory
+}
+
+function removeFromHistory(history: string[] | undefined, tabId: string): string[] {
+  return (history ?? []).filter((id) => id !== tabId)
+}
+
+function normalizeSpace(space: AppSpace): AppSpace {
+  const tabIds = new Set(space.tabs.map((tab) => tab.id))
+  const historyFromState = (space.tabHistory ?? []).filter((id) => tabIds.has(id))
+  const activeFallback = tabIds.has(space.activeTabId) ? space.activeTabId : space.tabs.at(0)?.id ?? ''
+  return {
+    ...space,
+    activeTabId: activeFallback,
+    tabHistory: activeFallback ? recordTabVisit(historyFromState, activeFallback) : historyFromState,
   }
 }
 
@@ -52,14 +74,18 @@ function findLastUsedAiSettings(state: AppSnapshot, activeSpaceId: string) {
 
 export function appReducer(state: AppSnapshot, action: Action): AppSnapshot {
   if (action.type === 'replace') {
-    return action.value
+    return {
+      ...action.value,
+      spaces: action.value.spaces.map(normalizeSpace),
+    }
   }
 
   if (action.type === 'add-space') {
+    const space = normalizeSpace(action.space)
     return {
       ...state,
-      spaces: [...state.spaces, action.space],
-      activeSpaceId: action.space.id,
+      spaces: [...state.spaces, space],
+      activeSpaceId: space.id,
     }
   }
 
@@ -87,6 +113,7 @@ export function appReducer(state: AppSnapshot, action: Action): AppSnapshot {
         ...space,
         tabs: [...space.tabs, nextTab],
         activeTabId: nextTab.id,
+        tabHistory: recordTabVisit(space.tabHistory, nextTab.id),
       }
     })
   }
@@ -95,7 +122,24 @@ export function appReducer(state: AppSnapshot, action: Action): AppSnapshot {
     return updateSpace(state, action.spaceId, (space) => ({
       ...space,
       activeTabId: action.tabId,
+      tabHistory: recordTabVisit(space.tabHistory, action.tabId),
     }))
+  }
+
+  if (action.type === 'insert-tab-after') {
+    return updateSpace(state, action.spaceId, (space) => {
+      const afterIndex = space.tabs.findIndex((tab) => tab.id === action.afterTabId)
+      const insertIndex = afterIndex >= 0 ? afterIndex + 1 : space.tabs.length
+      const nextTabs = [...space.tabs]
+      nextTabs.splice(insertIndex, 0, action.tab)
+
+      return {
+        ...space,
+        tabs: nextTabs,
+        activeTabId: action.activate === false ? space.activeTabId : action.tab.id,
+        tabHistory: action.activate === false ? space.tabHistory ?? [] : recordTabVisit(space.tabHistory, action.tab.id),
+      }
+    })
   }
 
   if (action.type === 'reorder-tab') {
@@ -134,12 +178,24 @@ export function appReducer(state: AppSnapshot, action: Action): AppSnapshot {
   if (action.type === 'close-tab') {
     return updateSpace(state, action.spaceId, (space) => {
       const nextTabs = space.tabs.filter((tab) => tab.id !== action.tabId)
-      const fallbackTab = nextTabs.at(0)
+      const nextIds = new Set(nextTabs.map((tab) => tab.id))
+      let nextHistory = removeFromHistory(space.tabHistory, action.tabId).filter((id) => nextIds.has(id))
+
+      let nextActiveId = space.activeTabId
+      if (space.activeTabId === action.tabId) {
+        nextActiveId = nextHistory.at(-1) ?? nextTabs.at(0)?.id ?? ''
+      }
+
+      if (nextActiveId) {
+        nextHistory = recordTabVisit(nextHistory, nextActiveId)
+      }
+
       return {
         ...space,
         tabs: nextTabs,
-        activeTabId: space.activeTabId === action.tabId ? fallbackTab?.id ?? '' : space.activeTabId,
+        activeTabId: nextActiveId,
         secondaryTabId: space.secondaryTabId === action.tabId ? null : space.secondaryTabId,
+        tabHistory: nextHistory,
       }
     })
   }
