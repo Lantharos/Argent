@@ -37,10 +37,6 @@ type Props = {
 type ModelOption = { id: string; label: string; contextWindow?: number | null }
 
 const EFFORT_ORDER = ['base', 'thinking', 'low', 'medium', 'high', 'xhigh'] as const
-const MODEL_CACHE_TTL_MS = 5 * 60 * 1000
-const sharedModelOptionsCache: Record<string, ModelOption[]> = {}
-const sharedModelOptionsFetchedAt: Record<string, number> = {}
-const sharedModelOptionsInflight = new Map<string, Promise<ModelOption[]>>()
 
 type EffortLevel = (typeof EFFORT_ORDER)[number]
 
@@ -232,6 +228,7 @@ export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }
   const modelMenuRef = useRef<HTMLDivElement | null>(null)
 
   const [modelOptions, setModelOptions] = useState<ModelOption[]>([])
+  const modelOptionsCacheRef = useRef<Record<string, ModelOption[]>>({})
   const modelLoadTokenRef = useRef(0)
   const [modelFilter, setModelFilter] = useState('')
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
@@ -272,7 +269,7 @@ export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }
     }
 
     if (selectedProvider) {
-      const cached = sharedModelOptionsCache[selectedProvider.id] ?? []
+      const cached = modelOptionsCacheRef.current[selectedProvider.id] ?? []
       const fromCache = cached.find((item) => item.id === selectedModelValue)?.label
       if (fromCache) {
         return fromCache
@@ -342,7 +339,7 @@ export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }
     }
 
     if (selectedProvider) {
-      const cached = sharedModelOptionsCache[selectedProvider.id] ?? []
+      const cached = modelOptionsCacheRef.current[selectedProvider.id] ?? []
       const fromCache = cached.find((item) => item.id === selectedModelValue)?.contextWindow
       if (typeof fromCache === 'number' && Number.isFinite(fromCache)) {
         return fromCache
@@ -596,7 +593,7 @@ export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }
 
       const providerId = selectedProvider.id
       const fallback = [{ id: selectedProvider.model, label: selectedProvider.model, contextWindow: null }]
-      const cached = sharedModelOptionsCache[providerId]
+      const cached = modelOptionsCacheRef.current[providerId]
       if (cached && cached.length > 0) {
         setModelOptions(cached)
       } else {
@@ -606,50 +603,16 @@ export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }
       const token = modelLoadTokenRef.current + 1
       modelLoadTokenRef.current = token
 
-      const hasFreshCache = Boolean(cached?.length) && Date.now() - (sharedModelOptionsFetchedAt[providerId] ?? 0) < MODEL_CACHE_TTL_MS
       let resolved = cached && cached.length > 0 ? cached : fallback
-
-      if (hasFreshCache) {
-        const current = tabRef.current
-        const currentModel = current.model || ''
-        const hasCurrent = Boolean(currentModel) && resolved.some((item) => item.id === currentModel)
-        const nextModel = hasCurrent ? currentModel : resolved[0]?.id || selectedProvider.model
-
-        if (current.providerId !== providerId || current.model !== nextModel) {
-          updateTab((prev) => ({
-            ...prev,
-            providerId,
-            model: nextModel,
-          }))
-        }
-        return
-      }
-
       try {
-        let inflight = sharedModelOptionsInflight.get(providerId)
-        if (!inflight) {
-          inflight = window.opensmith.ai
-            .listModels({ providerId, cwd })
-            .then((models) => {
-              if (models.length > 0) {
-                sharedModelOptionsCache[providerId] = models
-                sharedModelOptionsFetchedAt[providerId] = Date.now()
-              }
-              return models
-            })
-            .finally(() => {
-              sharedModelOptionsInflight.delete(providerId)
-            })
-          sharedModelOptionsInflight.set(providerId, inflight)
-        }
-
-        const models = await inflight
+        const models = await window.opensmith.ai.listModels({ providerId, cwd })
         if (token !== modelLoadTokenRef.current) {
           return
         }
 
         if (models.length > 0) {
           resolved = models
+          modelOptionsCacheRef.current[providerId] = models
           setModelOptions(models)
         }
       } catch {
@@ -1103,7 +1066,7 @@ export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }
         }}
       >
         <div
-          className="flex flex-col w-full rounded-3xl border border-white/20 hover:border-white/30 focus-within:border-white/40 transition px-1 bg-[#101010]/74 backdrop-blur-xl backdrop-saturate-150 text-[#e5e5e5] shadow-[0_20px_55px_rgba(0,0,0,0.5)]"
+          className="flex flex-col w-full rounded-3xl border border-white/20 hover:border-white/30 focus-within:border-white/40 transition px-1 bg-[#131313]/74 backdrop-blur-xl backdrop-saturate-150 text-[#e5e5e5] shadow-[0_20px_55px_rgba(0,0,0,0.5)]"
           dir="auto"
         >
           <div className="px-2.5">
@@ -1128,20 +1091,20 @@ export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }
 
           <div className="flex items-center justify-between mb-2.5 mx-1 border-t border-[#2c2c2c] pt-2">
             <div className="flex items-center gap-1.5">
-              <button type="button" className="bg-transparent hover:bg-white/8 text-[#b8b8b8] transition rounded-full p-1.5 outline-none" onClick={addFileContext} aria-label="Add file">
-                <Plus className="h-4 w-4" />
-              </button>
-
-              <div className="relative" ref={modelMenuRef}>
+              <div className="relative flex items-center" ref={modelMenuRef}>
                 <button
                   type="button"
-                  className="rounded-lg border border-[#383838] bg-[#1a1a1a] px-2 py-1.5 text-sm text-[#d7d7d7] outline-none focus:border-[#5c5c5c] inline-flex items-center gap-1.5 min-w-[260px] justify-between"
+                  className="rounded-lg px-2 py-1.5 text-sm text-[#878787] outline-none hover:bg-white/8 hover:text-[#d0d0d0] inline-flex items-center gap-1.5 min-w-[260px] justify-between transition-colors duration-200"
                   onClick={() => setModelMenuOpen((prev) => !prev)}
                   aria-haspopup="listbox"
                   aria-expanded={modelMenuOpen}
                 >
                   <span className="truncate">{selectedModelLabel}</span>
                   <ChevronDown className="h-3.5 w-3.5" />
+                </button>
+
+                <button type="button" className="bg-transparent hover:bg-white/8 text-[#b8b8b8] transition rounded-full p-1.5 outline-none" onClick={addFileContext} aria-label="Add file">
+                    <Plus className="h-4 w-4" />
                 </button>
 
                 {modelMenuOpen ? (
@@ -1237,23 +1200,6 @@ export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }
                   {formatContextWindow(selectedModelContextWindow)}
                 </span>
               ) : null}
-
-              <div className="relative">
-                <button
-                  type="button"
-                  className="text-xs text-[#959595] inline-flex items-center gap-1 rounded-full border border-[#3a3a3a] bg-[#1b1b1b] px-2 py-1 hover:bg-[#242424] transition-colors"
-                  onClick={() => setActiveMetaPopover((prev) => (prev === 'local' ? null : 'local'))}
-                >
-                  <Monitor className="h-3.5 w-3.5" />
-                  Local
-                </button>
-                {activeMetaPopover === 'local' ? (
-                  <div className="absolute right-0 bottom-[calc(100%+8px)] w-[220px] rounded-xl border border-[#353535] bg-[#161616] px-3 py-2 text-[12px] leading-relaxed text-[#b9b9b9] shadow-[0_14px_30px_rgba(0,0,0,0.45)] z-40" role="status">
-                    Uses files from the active workspace path only.
-                  </div>
-                ) : null}
-              </div>
-
               <div className="relative">
                 <button
                   type="button"
