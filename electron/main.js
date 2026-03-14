@@ -13,6 +13,7 @@ import {
 import { providerSchema } from './ai/schema.js'
 import { listAssistantModels, requestAssistantReply, requestAssistantReplyStream } from './ai/client.js'
 import { TerminalManager } from './terminal/terminalManager.js'
+import { setupGitHandlers } from './git/gitManager.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -105,6 +106,7 @@ function setupWebviewHardening() {
 }
 
 function setupIpc() {
+  setupGitHandlers()
   ipcMain.handle('app:load-state', () => loadState())
   ipcMain.handle('app:save-state', (_, state) => saveState(state))
 

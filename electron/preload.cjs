@@ -7,6 +7,10 @@ function on(channel, callback) {
 }
 
 contextBridge.exposeInMainWorld('opensmith', {
+  git: {
+    checkInstalled: () => ipcRenderer.invoke('git:check-installed'),
+    exec: (opts) => ipcRenderer.invoke('git:exec', opts)
+  },
   app: {
     loadState: () => ipcRenderer.invoke('app:load-state'),
     saveState: (state) => ipcRenderer.invoke('app:save-state', state),

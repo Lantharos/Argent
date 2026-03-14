@@ -39,6 +39,15 @@ export function createTab(type: AppTabType, rootPath: string): AppTab {
     }
   }
 
+  if (type === 'git') {
+    return {
+      id,
+      type,
+      title: 'Git',
+      cwd: rootPath,
+    }
+  }
+
   return {
     id,
     type,

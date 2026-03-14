@@ -3,6 +3,7 @@ import { AITab } from '../components/tabs/AITab'
 import { BrowserTab } from '../components/tabs/BrowserTab'
 import { TerminalTab } from '../components/tabs/TerminalTab'
 import { EditorTab } from '../components/tabs/EditorTab'
+import { GitTab } from '../components/tabs/GitTab'
 
 type Props = {
   tab: AppTab
@@ -40,6 +41,10 @@ export function TabRenderer({ tab, isActive = true, spaceId, cwd, providers, upd
 
   if (tab.type === 'terminal') {
     return <TerminalTab tab={tab} isActive={isActive} onChange={(next) => updateTab(next)} />
+  }
+
+  if (tab.type === 'git') {
+    return <GitTab tab={tab} isActive={isActive} onChange={(next) => updateTab(next)} />
   }
 
   return (

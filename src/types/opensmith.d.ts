@@ -37,12 +37,17 @@ export type AIStreamEvent =
   | { type: 'done'; reply: AIReply }
   | { type: 'error'; message: string }
 
-export type AppTabType = 'ai' | 'browser' | 'terminal' | 'editor'
+export type AppTabType = 'ai' | 'browser' | 'terminal' | 'editor' | 'git'
 
-export type AppTabBase = {
-  id: string
-  title: string
-  type: AppTabType
+  export type AppTabBase = {
+    id: string
+    title: string
+    type: AppTabType
+  }
+
+  export type GitTabData = AppTabBase & {
+    type: 'git'
+    cwd: string
 }
 
 export type AITabData = AppTabBase & {
@@ -78,7 +83,7 @@ export type EditorTabData = AppTabBase & {
   sidebarOpen?: boolean
 }
 
-export type AppTab = AITabData | BrowserTabData | TerminalTabData | EditorTabData
+export type AppTab = AITabData | BrowserTabData | TerminalTabData | EditorTabData | GitTabData
 
 export type AppSpace = {
   id: string
@@ -98,6 +103,10 @@ export type AppSnapshot = {
 declare global {
   interface Window {
     opensmith: {
+      git: {
+        checkInstalled: () => Promise<{ installed: boolean, version?: string, error?: string }>
+        exec: (opts: { cwd: string, args: string[] }) => Promise<{ success: boolean, stdout?: string, stderr?: string, error?: string }>
+      }
       app: {
         loadState: () => Promise<AppSnapshot>
         saveState: (state: AppSnapshot) => Promise<boolean>

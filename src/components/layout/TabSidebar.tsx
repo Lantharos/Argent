@@ -9,30 +9,25 @@ type Props = {
 
 export function TabSidebar({ space, onSelectTab, onCloseTab, onAddTab }: Props) {
   return (
-    <aside className="glass-panel flex flex-col gap-2 p-3">
-      <div className="flex flex-wrap gap-2">
-        <button className="chip-btn" onClick={() => onAddTab('ai')}>
-          + AI
-        </button>
-        <button className="chip-btn" onClick={() => onAddTab('browser')}>
-          + Browser
-        </button>
-        <button className="chip-btn" onClick={() => onAddTab('terminal')}>
-          + Terminal
-        </button>
-        <button className="chip-btn" onClick={() => onAddTab('editor')}>
-          + Editor
-        </button>
+    <aside className="glass-panel w-64 flex flex-col gap-4 p-3 h-full overflow-hidden">
+      <div className="flex flex-wrap gap-2 shrink-0">
+        <button className="chip-btn" onClick={() => onAddTab('ai')}>+ AI</button>
+        <button className="chip-btn" onClick={() => onAddTab('browser')}>+ Browser</button>
+        <button className="chip-btn" onClick={() => onAddTab('terminal')}>+ Terminal</button>
+        <button className="chip-btn" onClick={() => onAddTab('editor')}>+ Editor</button>
+        <button className="chip-btn" onClick={() => onAddTab('git')}>+ Git</button>
       </div>
 
-      <div className="flex flex-col gap-0.5 mt-1 mb-2 border-l border-white/12 pl-3">
+      <div className="flex flex-col gap-1 overflow-y-auto flex-1 h-full min-h-0">
         {space.tabs.map((tab) => (
-          <div key={tab.id} className={`flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-md transition-colors ${space.activeTabId === tab.id ? 'text-[#e9e9e9] bg-white/12' : 'text-[#9a9a9a] hover:text-[#d7d7d7] hover:bg-white/8'}`}>
-            <button className="flex items-center gap-2 min-w-0 text-left" onClick={() => onSelectTab(tab.id)}>
-              <span className="inline-flex items-center justify-center w-5 h-5 rounded bg-white/8 text-[11px] text-[#c7c7c7]">{tab.type.slice(0, 1).toUpperCase()}</span>
-              <span>{tab.title}</span>
+          <div key={tab.id} className={`flex justify-between items-center gap-2 p-1.5 rounded-md transition-colors ${space.activeTabId === tab.id ? 'bg-white/10 text-white' : 'hover:bg-white/5 text-[#bebebe]'}`}>
+            <button className="flex-1 flex items-center gap-2 text-left truncate text-sm min-w-0" onClick={() => onSelectTab(tab.id)}>
+              <span className="shrink-0 inline-flex items-center justify-center w-5 h-5 rounded bg-white/8 text-[11px] text-[#c7c7c7]">
+                {tab.type.slice(0, 1).toUpperCase()}
+              </span>
+              <span className="truncate">{tab.title}</span>
             </button>
-            <button className="p-1 rounded-md hover:bg-white/12 text-[#9a9a9a] hover:text-white transition-colors" onClick={() => onCloseTab(tab.id)}>
+            <button className="shrink-0 p-1 rounded-md hover:bg-white/12 text-[#9a9a9a] hover:text-white transition-colors" onClick={() => onCloseTab(tab.id)}>
               ×
             </button>
           </div>
@@ -41,3 +36,4 @@ export function TabSidebar({ space, onSelectTab, onCloseTab, onAddTab }: Props) 
     </aside>
   )
 }
+
