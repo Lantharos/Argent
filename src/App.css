@@ -13,10 +13,11 @@
 
   .workspace-titlebar-zone {
     @apply absolute top-0 left-0 right-0;
-    height: 42px;
-    z-index: 35;
-    -webkit-app-region: no-drag;
-    background: transparent;
+    height: 52px;
+    z-index: 9999;
+    pointer-events: auto;
+    -webkit-app-region: drag !important;
+    background: rgba(0, 0, 0, 0.03);
   }
 
   .workspace-titlebar {
@@ -128,6 +129,15 @@
   .ai-tab .pane-head {
     @apply border-b border-white/10;
   }
+
+  .ai-tab * {
+    -webkit-app-region: no-drag;
+  }
+
+  .ai-tab {
+    user-select: text;
+  }
+
 
   .browser-webview {
     -webkit-app-region: no-drag;

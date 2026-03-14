@@ -5,6 +5,8 @@ import { TabRenderer } from '../../tabs/TabRenderer'
 const HOT_TAB_LIMIT = 6
 const TAB_SNOOZE_MS = 180_000
 const CACHE_CLEANUP_MS = 4_000
+const TITLEBAR_SHOW_Y = 72
+const TITLEBAR_HIDE_Y = 96
 
 type Props = {
   space: AppSpace
@@ -60,7 +62,7 @@ export function Workspace({
 }: Props) {
   const [titlebarVisible, setTitlebarVisible] = useState(false)
   const [hotTabIds, setHotTabIds] = useState<string[]>(activeTab ? [activeTab.id] : [])
-  const hideTimeoutRef = useRef<number | null>(null)
+  const titlebarVisibleRef = useRef(false)
   const tabLastSeenRef = useRef<Record<string, number>>({})
 
   if (!activeTab) {
@@ -115,24 +117,6 @@ export function Workspace({
     return snoozed
   }
 
-  function showTitlebar() {
-    if (hideTimeoutRef.current) {
-      window.clearTimeout(hideTimeoutRef.current)
-      hideTimeoutRef.current = null
-    }
-    setTitlebarVisible(true)
-  }
-
-  function scheduleHideTitlebar() {
-    if (hideTimeoutRef.current) {
-      window.clearTimeout(hideTimeoutRef.current)
-    }
-    hideTimeoutRef.current = window.setTimeout(() => {
-      setTitlebarVisible(false)
-      hideTimeoutRef.current = null
-    }, 140)
-  }
-
   useEffect(() => {
     const now = Date.now()
     tabLastSeenRef.current[currentTab.id] = now
@@ -154,14 +138,46 @@ export function Workspace({
   }, [currentTab.id, space.tabs])
 
   useEffect(() => {
+    const setTitlebar = (nextVisible: boolean) => {
+      if (titlebarVisibleRef.current === nextVisible) {
+        return
+      }
+      titlebarVisibleRef.current = nextVisible
+      setTitlebarVisible(nextVisible)
+    }
+
+    if (currentTab.type === 'browser') {
+      setTitlebar(true)
+      return
+    }
+
+    const onMouseMove = (event: MouseEvent) => {
+      if (event.clientY <= TITLEBAR_SHOW_Y) {
+        setTitlebar(true)
+        return
+      }
+      if (event.clientY >= TITLEBAR_HIDE_Y) {
+        setTitlebar(false)
+      }
+    }
+
+    const onMouseLeave = () => setTitlebar(false)
+
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseleave', onMouseLeave)
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseleave', onMouseLeave)
+    }
+  }, [currentTab.type])
+
+  useEffect(() => {
+    titlebarVisibleRef.current = titlebarVisible
     void window.opensmith.window.setNativeControlsVisible(titlebarVisible)
   }, [titlebarVisible])
 
   useEffect(() => {
     return () => {
-      if (hideTimeoutRef.current) {
-        window.clearTimeout(hideTimeoutRef.current)
-      }
       void window.opensmith.window.setNativeControlsVisible(false)
     }
   }, [])
@@ -172,9 +188,8 @@ export function Workspace({
 
   return (
     <section className={`workspace glass-panel ${titlebarVisible ? 'is-titlebar-visible' : ''}`}>
-      <div className="workspace-titlebar-zone" onPointerEnter={showTitlebar} />
-      <div className="workspace-titlebar" onPointerEnter={showTitlebar} />
-      <div className="workspace-content" onPointerEnter={scheduleHideTitlebar}>
+      <div className="workspace-titlebar" />
+      <div className="workspace-content">
         <div className={`workspace-body ${isBrowserTab ? 'bg-transparent backdrop-blur-none' : ''}`}>
           <div className="relative h-full min-h-0">
             {hotTabs.map((tab) => {
@@ -199,6 +214,7 @@ export function Workspace({
           </div>
         </div>
       </div>
+      <div className="workspace-titlebar-zone" />
     </section>
   )
 }

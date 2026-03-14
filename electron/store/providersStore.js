@@ -1,6 +1,60 @@
 import fs from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import { safeStorage } from 'electron'
 import { getProvidersPath, getSecretsPath } from './paths.js'
+
+const BUILTIN_PROVIDER_IDS = new Set(['codex-app-server', 'copilot-sdk', 'opencode-acp'])
+
+function commandExists(command) {
+  const checker = process.platform === 'win32' ? 'where' : 'which'
+  const probe = spawnSync(checker, [command], {
+    windowsHide: true,
+    stdio: 'ignore',
+  })
+  return probe.status === 0
+}
+
+function detectBuiltinProviders() {
+  const providers = []
+
+  if (commandExists('codex')) {
+    providers.push({
+      id: 'codex-app-server',
+      label: 'Codex App Server',
+      kind: 'codex-app-server',
+      model: 'gpt-5.1-codex',
+      endpoint: 'http://127.0.0.1:4141/v1',
+      headers: {},
+      source: 'detected',
+    })
+  }
+
+  if (commandExists('copilot')) {
+    providers.push({
+      id: 'copilot-sdk',
+      label: 'GitHub Copilot SDK',
+      kind: 'copilot-sdk',
+      model: 'gpt-4.1',
+      endpoint: 'http://127.0.0.1:4142/v1',
+      headers: {},
+      source: 'detected',
+    })
+  }
+
+  if (commandExists('opencode')) {
+    providers.push({
+      id: 'opencode-acp',
+      label: 'OpenCode ACP',
+      kind: 'acp-opencode',
+      model: 'opencode/big-pickle',
+      endpoint: 'stdio://opencode-acp',
+      headers: {},
+      source: 'detected',
+    })
+  }
+
+  return providers
+}
 
 function loadJson(path, fallback) {
   try {
@@ -39,9 +93,28 @@ function saveEncryptedSecrets(secrets) {
 }
 
 export function listProviders() {
-  const providers = loadJson(getProvidersPath(), [])
+  const savedProviders = loadJson(getProvidersPath(), [])
+  const detectedProviders = detectBuiltinProviders()
+  const merged = new Map()
+
+  for (const provider of savedProviders) {
+    if (BUILTIN_PROVIDER_IDS.has(provider.id)) {
+      continue
+    }
+    merged.set(provider.id, provider)
+  }
+
+  for (const provider of detectedProviders) {
+    const existing = savedProviders.find((item) => item.id === provider.id)
+    merged.set(provider.id, {
+      ...provider,
+      model: existing?.model || provider.model,
+      headers: existing?.headers || provider.headers,
+    })
+  }
+
   const secrets = loadEncryptedSecrets()
-  return providers.map((provider) => ({ ...provider, hasApiKey: Boolean(secrets[provider.id]) }))
+  return Array.from(merged.values()).map((provider) => ({ ...provider, hasApiKey: Boolean(secrets[provider.id]) }))
 }
 
 export function upsertProvider(payload) {
@@ -56,6 +129,7 @@ export function upsertProvider(payload) {
     model: payload.model,
     endpoint: payload.endpoint,
     headers: payload.headers,
+    source: payload.source || 'manual',
   }
 
   if (index === -1) {
@@ -92,47 +166,7 @@ export function getProviderSecret(providerId) {
 export function ensureDefaultProviders() {
   const current = loadJson(getProvidersPath(), [])
 
-  const presets = [
-    {
-      id: 'codex-app-server',
-      label: 'Codex App Server',
-      kind: 'codex-app-server',
-      model: 'gpt-5.1-codex',
-      endpoint: 'http://127.0.0.1:4141/v1',
-      headers: {},
-    },
-    {
-      id: 'copilot-sdk',
-      label: 'Copilot SDK',
-      kind: 'copilot-sdk',
-      model: 'copilot-chat',
-      endpoint: 'http://127.0.0.1:4142/v1',
-      headers: {},
-    },
-  ]
-
   if (current.length === 0) {
-    saveJson(getProvidersPath(), presets)
-    return
+    saveJson(getProvidersPath(), [])
   }
-
-  const map = new Map(current.map((provider) => [provider.id, provider]))
-  for (const preset of presets) {
-    const existing = map.get(preset.id)
-    if (!existing) {
-      map.set(preset.id, preset)
-      continue
-    }
-
-    map.set(preset.id, {
-      ...existing,
-      label: preset.label,
-      kind: preset.kind,
-      model: preset.model,
-      endpoint: preset.endpoint,
-      headers: existing.headers ?? {},
-    })
-  }
-
-  saveJson(getProvidersPath(), Array.from(map.values()))
 }

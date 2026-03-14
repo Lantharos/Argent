@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { loadState, saveState } from './store/stateStore.js'
 import {
@@ -10,7 +11,7 @@ import {
   upsertProvider,
 } from './store/providersStore.js'
 import { providerSchema } from './ai/schema.js'
-import { listAssistantModels, requestAssistantReply } from './ai/client.js'
+import { listAssistantModels, requestAssistantReply, requestAssistantReplyStream } from './ai/client.js'
 import { TerminalManager } from './terminal/terminalManager.js'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -179,6 +180,42 @@ function setupIpc() {
   ipcMain.handle('providers:remove', (_, providerId) => removeProvider(providerId))
 
   ipcMain.handle('ai:send-message', async (_, payload) => requestAssistantReply(payload))
+  ipcMain.handle('ai:stream-start', async (event, payload) => {
+    const requestId = randomUUID()
+    const sender = event.sender
+
+    const send = (streamPayload) => {
+      if (!sender.isDestroyed()) {
+        sender.send('ai:stream-event', streamPayload)
+      }
+    }
+
+    void (async () => {
+      try {
+        const reply = await requestAssistantReplyStream(payload, (streamEvent) => {
+          send({ requestId, event: streamEvent })
+        })
+
+        send({
+          requestId,
+          event: {
+            type: 'done',
+            reply,
+          },
+        })
+      } catch (error) {
+        send({
+          requestId,
+          event: {
+            type: 'error',
+            message: error instanceof Error ? error.message : String(error),
+          },
+        })
+      }
+    })()
+
+    return { requestId }
+  })
   ipcMain.handle('ai:list-models', async (_, payload) => listAssistantModels(payload))
 
   ipcMain.handle('terminal:create', (_, cwd) => terminalManager.createSession(cwd))

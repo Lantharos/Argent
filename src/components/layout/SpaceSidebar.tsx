@@ -121,7 +121,7 @@ export function SpaceSidebar({
     <aside className="w-[292px] flex-shrink-0 flex flex-col pt-3 pb-3 px-3 gap-3 bg-black/26 backdrop-blur-2xl shadow-[inset_-1px_0_0_0_rgba(255,255,255,0.05)]">
       <div className="flex items-center justify-between px-2">
         <div className="text-sm font-semibold text-[#d0d0d0] tracking-wide">OpenSmith</div>
-        <button className="text-[12px] text-[#9a9a9a] hover:text-[#e0e0e0] px-2 py-1 rounded-md cursor-pointer transition-colors hover:bg-white/8" onClick={onAddSpace}>
+        <button className="text-[12px] text-[#9a9a9a] hover:text-[#e0e0e0] px-2 py-1 rounded-md cursor-pointer transition-colors hover:bg-white/8 outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-0" onClick={onAddSpace}>
           Add Space
         </button>
       </div>

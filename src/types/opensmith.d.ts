@@ -1,4 +1,4 @@
-export type ProviderKind = 'openai-compatible' | 'codex-app-server' | 'copilot-sdk'
+export type ProviderKind = 'openai-compatible' | 'codex-app-server' | 'copilot-sdk' | 'acp-opencode'
 
 export type ProviderConfig = {
   id: string
@@ -9,6 +9,7 @@ export type ProviderConfig = {
   headers: Record<string, string>
   apiKey?: string
   hasApiKey?: boolean
+  source?: 'manual' | 'detected'
 }
 
 export type ChatMessage = {
@@ -22,6 +23,18 @@ export type AIReply = {
   model: string
   usage: unknown
 }
+
+export type AIStreamEvent =
+  | { type: 'text-delta'; delta: string }
+  | {
+      type: 'tool'
+      id: string | null
+      status: 'pending' | 'in_progress' | 'completed' | 'failed' | string
+      kind?: string
+      title: string
+    }
+  | { type: 'done'; reply: AIReply }
+  | { type: 'error'; message: string }
 
 export type AppTabType = 'ai' | 'browser' | 'terminal' | 'editor'
 
@@ -103,7 +116,15 @@ declare global {
           temperature?: number
           cwd?: string
         }) => Promise<AIReply>
+        streamStart: (payload: {
+          providerId: string
+          messages: ChatMessage[]
+          model?: string
+          temperature?: number
+          cwd?: string
+        }) => Promise<{ requestId: string }>
         listModels: (payload: { providerId: string; cwd?: string }) => Promise<Array<{ id: string; label: string }>>
+        onStreamEvent: (callback: (payload: { requestId: string; event: AIStreamEvent }) => void) => () => void
       }
       terminal: {
         create: (cwd: string) => Promise<{ id: string }>

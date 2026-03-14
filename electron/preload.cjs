@@ -25,7 +25,9 @@ contextBridge.exposeInMainWorld('opensmith', {
   },
   ai: {
     sendMessage: (payload) => ipcRenderer.invoke('ai:send-message', payload),
+    streamStart: (payload) => ipcRenderer.invoke('ai:stream-start', payload),
     listModels: (payload) => ipcRenderer.invoke('ai:list-models', payload),
+    onStreamEvent: (callback) => on('ai:stream-event', callback),
   },
   terminal: {
     create: (cwd) => ipcRenderer.invoke('terminal:create', cwd),
