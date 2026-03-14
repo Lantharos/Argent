@@ -51,6 +51,8 @@ export type AITabData = AppTabBase & {
   model: string | null
   messages: ChatMessage[]
   input: string
+  isGenerating?: boolean
+  hasUnread?: boolean
 }
 
 export type BrowserTabData = AppTabBase & {
@@ -127,6 +129,7 @@ declare global {
           temperature?: number
           cwd?: string
         }) => Promise<{ requestId: string }>
+        streamCancel: (payload: { requestId: string }) => Promise<boolean>
         listModels: (payload: { providerId: string; cwd?: string }) => Promise<Array<{ id: string; label: string; contextWindow?: number | null }>>
         onStreamEvent: (callback: (payload: { requestId: string; event: AIStreamEvent }) => void) => () => void
       }

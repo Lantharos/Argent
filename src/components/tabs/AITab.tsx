@@ -4,10 +4,13 @@ import type { Components } from 'react-markdown'
 import {
   ChevronDown,
   CircleDot,
+  Copy,
   FileText,
   Monitor,
   PencilLine,
+  RotateCcw,
   SendHorizontal,
+  Square,
   TerminalSquare,
   TriangleAlert,
   Plus,
@@ -19,6 +22,7 @@ import type { AITabData, AIStreamEvent, ProviderConfig } from '../../types/opens
 
 type Props = {
   tab: AITabData
+  isActive?: boolean
   cwd: string
   providers: ProviderConfig[]
   onChange: (next: AITabData) => void
@@ -33,6 +37,10 @@ type Props = {
 type ModelOption = { id: string; label: string; contextWindow?: number | null }
 
 const EFFORT_ORDER = ['base', 'thinking', 'low', 'medium', 'high', 'xhigh'] as const
+const MODEL_CACHE_TTL_MS = 5 * 60 * 1000
+const sharedModelOptionsCache: Record<string, ModelOption[]> = {}
+const sharedModelOptionsFetchedAt: Record<string, number> = {}
+const sharedModelOptionsInflight = new Map<string, Promise<ModelOption[]>>()
 
 type EffortLevel = (typeof EFFORT_ORDER)[number]
 
@@ -217,24 +225,25 @@ function formatContextWindow(value: number | null) {
   return `${value} ctx`
 }
 
-export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
+export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }: Props) {
   const [loading, setLoading] = useState(false)
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
   const [activeMetaPopover, setActiveMetaPopover] = useState<'local' | 'access' | null>(null)
   const modelMenuRef = useRef<HTMLDivElement | null>(null)
 
   const [modelOptions, setModelOptions] = useState<ModelOption[]>([])
-  const modelOptionsCacheRef = useRef<Record<string, ModelOption[]>>({})
   const modelLoadTokenRef = useRef(0)
   const [modelFilter, setModelFilter] = useState('')
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
 
   const activeRequestIdRef = useRef<string | null>(null)
+  const cancelRequestedRef = useRef(false)
   const toolMessageIndexByIdRef = useRef<Record<string, number>>({})
   const tabRef = useRef(tab)
   const onChangeRef = useRef(onChange)
   const scrollRef = useRef<HTMLDivElement>(null)
   const isAutoScrolling = useRef(true)
+  const isActiveRef = useRef(isActive)
 
   useEffect(() => {
     tabRef.current = tab
@@ -243,6 +252,10 @@ export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
   useEffect(() => {
     onChangeRef.current = onChange
   }, [onChange])
+
+  useEffect(() => {
+    isActiveRef.current = isActive
+  }, [isActive])
 
   const selectedProvider = useMemo<ProviderConfig | null>(
     () => providers.find((provider) => provider.id === 'opencode-acp') ?? null,
@@ -259,7 +272,7 @@ export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
     }
 
     if (selectedProvider) {
-      const cached = modelOptionsCacheRef.current[selectedProvider.id] ?? []
+      const cached = sharedModelOptionsCache[selectedProvider.id] ?? []
       const fromCache = cached.find((item) => item.id === selectedModelValue)?.label
       if (fromCache) {
         return fromCache
@@ -329,7 +342,7 @@ export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
     }
 
     if (selectedProvider) {
-      const cached = modelOptionsCacheRef.current[selectedProvider.id] ?? []
+      const cached = sharedModelOptionsCache[selectedProvider.id] ?? []
       const fromCache = cached.find((item) => item.id === selectedModelValue)?.contextWindow
       if (typeof fromCache === 'number' && Number.isFinite(fromCache)) {
         return fromCache
@@ -338,6 +351,10 @@ export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
 
     return null
   }, [modelOptions, selectedProvider, selectedModelValue])
+
+  const assistantModelLabel = useMemo(() => {
+    return selectedModelLabel || selectedModelValue || selectedProvider?.model || 'Model'
+  }, [selectedModelLabel, selectedModelValue, selectedProvider])
 
   useEffect(() => {
     setCollapsedGroups((prev) => {
@@ -369,6 +386,21 @@ export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
     tabRef.current = next
     onChangeRef.current(next)
   }, [])
+
+  useEffect(() => {
+    setLoading(Boolean(tab.isGenerating))
+  }, [tab.isGenerating])
+
+  useEffect(() => {
+    if (!isActive || !tab.hasUnread) {
+      return
+    }
+
+    updateTab((current) => ({
+      ...current,
+      hasUnread: false,
+    }))
+  }, [isActive, tab.hasUnread, updateTab])
 
   useEffect(() => {
     if (isAutoScrolling.current && scrollRef.current) {
@@ -478,6 +510,7 @@ export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
       if (event.type === 'error') {
         activeRequestIdRef.current = null
         setLoading(false)
+        const wasCancelled = /cancel|aborted/i.test(event.message)
 
         updateTab((current) => {
           const messages = current.messages.map((msg) => {
@@ -489,10 +522,17 @@ export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
             }
             return msg
           })
-          return { ...current, messages }
+          return {
+            ...current,
+            messages,
+            isGenerating: false,
+            hasUnread: !isActiveRef.current,
+          }
         })
 
-        appendAssistantDelta(`\n\nError: ${event.message}`)
+        if (!wasCancelled) {
+          appendAssistantDelta(`\n\nError: ${event.message}`)
+        }
         return
       }
 
@@ -510,7 +550,12 @@ export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
             }
             return msg
           })
-          return { ...current, messages }
+          return {
+            ...current,
+            messages,
+            isGenerating: false,
+            hasUnread: !isActiveRef.current,
+          }
         })
 
         const reply = event.reply
@@ -551,7 +596,7 @@ export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
 
       const providerId = selectedProvider.id
       const fallback = [{ id: selectedProvider.model, label: selectedProvider.model, contextWindow: null }]
-      const cached = modelOptionsCacheRef.current[providerId]
+      const cached = sharedModelOptionsCache[providerId]
       if (cached && cached.length > 0) {
         setModelOptions(cached)
       } else {
@@ -561,16 +606,50 @@ export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
       const token = modelLoadTokenRef.current + 1
       modelLoadTokenRef.current = token
 
+      const hasFreshCache = Boolean(cached?.length) && Date.now() - (sharedModelOptionsFetchedAt[providerId] ?? 0) < MODEL_CACHE_TTL_MS
       let resolved = cached && cached.length > 0 ? cached : fallback
+
+      if (hasFreshCache) {
+        const current = tabRef.current
+        const currentModel = current.model || ''
+        const hasCurrent = Boolean(currentModel) && resolved.some((item) => item.id === currentModel)
+        const nextModel = hasCurrent ? currentModel : resolved[0]?.id || selectedProvider.model
+
+        if (current.providerId !== providerId || current.model !== nextModel) {
+          updateTab((prev) => ({
+            ...prev,
+            providerId,
+            model: nextModel,
+          }))
+        }
+        return
+      }
+
       try {
-        const models = await window.opensmith.ai.listModels({ providerId, cwd })
+        let inflight = sharedModelOptionsInflight.get(providerId)
+        if (!inflight) {
+          inflight = window.opensmith.ai
+            .listModels({ providerId, cwd })
+            .then((models) => {
+              if (models.length > 0) {
+                sharedModelOptionsCache[providerId] = models
+                sharedModelOptionsFetchedAt[providerId] = Date.now()
+              }
+              return models
+            })
+            .finally(() => {
+              sharedModelOptionsInflight.delete(providerId)
+            })
+          sharedModelOptionsInflight.set(providerId, inflight)
+        }
+
+        const models = await inflight
         if (token !== modelLoadTokenRef.current) {
           return
         }
 
         if (models.length > 0) {
           resolved = models
-          modelOptionsCacheRef.current[providerId] = models
           setModelOptions(models)
         }
       } catch {
@@ -645,9 +724,12 @@ export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
       input: '',
       providerId: provider.id,
       messages: withUser,
+      isGenerating: true,
+      hasUnread: false,
     }))
 
     toolMessageIndexByIdRef.current = {}
+    cancelRequestedRef.current = false
 
     setLoading(true)
     isAutoScrolling.current = true
@@ -665,8 +747,31 @@ export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
         model: current.model || provider.model,
       })
 
+      if (cancelRequestedRef.current) {
+        setLoading(false)
+        updateTab((prev) => ({
+          ...prev,
+          isGenerating: false,
+        }))
+        try {
+          await window.opensmith.ai.streamCancel({ requestId: streamStart.requestId })
+        } catch {
+          // no-op
+        }
+        return
+      }
+
       activeRequestIdRef.current = streamStart.requestId
     } catch {
+      if (cancelRequestedRef.current) {
+        setLoading(false)
+        updateTab((prev) => ({
+          ...prev,
+          isGenerating: false,
+        }))
+        return
+      }
+
       try {
         const usable = compacted.filter(
           (msg): msg is { role: 'user' | 'assistant'; content: string } =>
@@ -684,11 +789,188 @@ export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
           return {
             ...prev,
             messages,
+            isGenerating: false,
+            hasUnread: !isActiveRef.current,
           }
         })
       } finally {
         setLoading(false)
+        updateTab((prev) => ({
+          ...prev,
+          isGenerating: false,
+          hasUnread: !isActiveRef.current,
+        }))
       }
+    }
+  }
+
+  async function copyToClipboard(value: string) {
+    if (!value) {
+      return
+    }
+
+    try {
+      await navigator.clipboard.writeText(value)
+      return
+    } catch {
+      const textArea = document.createElement('textarea')
+      textArea.value = value
+      textArea.setAttribute('readonly', 'true')
+      textArea.style.position = 'fixed'
+      textArea.style.left = '-9999px'
+      document.body.appendChild(textArea)
+      textArea.select()
+      document.execCommand('copy')
+      document.body.removeChild(textArea)
+    }
+  }
+
+  async function handleRetryLastAssistant() {
+    if (loading || !selectedProvider || lastAssistantTextIndex < 0) {
+      return
+    }
+
+    const current = tabRef.current
+    const retryCutoff = lastAssistantTextIndex
+    let lastUserIndex = -1
+    for (let index = retryCutoff - 1; index >= 0; index -= 1) {
+      if (current.messages[index]?.role === 'user') {
+        lastUserIndex = index
+        break
+      }
+    }
+
+    if (lastUserIndex < 0) {
+      return
+    }
+
+    const seededMessages = current.messages.slice(0, lastUserIndex + 1)
+    const compacted = compactConversation(
+      seededMessages.filter(
+        (msg): msg is { role: 'user' | 'assistant'; content: string } =>
+          (msg.role === 'user' || msg.role === 'assistant') && msg.content.length > 0,
+      ),
+    )
+
+    activeRequestIdRef.current = null
+    toolMessageIndexByIdRef.current = {}
+    cancelRequestedRef.current = false
+
+    updateTab((prev) => ({
+      ...prev,
+      providerId: selectedProvider.id,
+      messages: seededMessages,
+      isGenerating: true,
+      hasUnread: false,
+    }))
+
+    setLoading(true)
+    isAutoScrolling.current = true
+
+    try {
+      const usable = compacted.filter(
+        (msg): msg is { role: 'user' | 'assistant'; content: string } =>
+          (msg.role === 'user' || msg.role === 'assistant') && msg.content.length > 0,
+      )
+
+      const streamStart = await window.opensmith.ai.streamStart({
+        providerId: selectedProvider.id,
+        messages: usable,
+        cwd,
+        model: current.model || selectedProvider.model,
+      })
+
+      if (cancelRequestedRef.current) {
+        setLoading(false)
+        updateTab((prev) => ({
+          ...prev,
+          isGenerating: false,
+        }))
+        try {
+          await window.opensmith.ai.streamCancel({ requestId: streamStart.requestId })
+        } catch {
+          // no-op
+        }
+        return
+      }
+
+      activeRequestIdRef.current = streamStart.requestId
+    } catch {
+      if (cancelRequestedRef.current) {
+        setLoading(false)
+        updateTab((prev) => ({
+          ...prev,
+          isGenerating: false,
+        }))
+        return
+      }
+
+      try {
+        const usable = compacted.filter(
+          (msg): msg is { role: 'user' | 'assistant'; content: string } =>
+            msg.role === 'user' || msg.role === 'assistant',
+        )
+        const content = await onSend(selectedProvider.id, usable, cwd, current.model || selectedProvider.model)
+
+        updateTab((prev) => {
+          const messages = [...prev.messages]
+          if (messages.length > 0 && messages[messages.length - 1].role === 'assistant') {
+            messages[messages.length - 1] = { role: 'assistant', content }
+          } else {
+            messages.push({ role: 'assistant', content })
+          }
+          return {
+            ...prev,
+            messages,
+            isGenerating: false,
+            hasUnread: !isActiveRef.current,
+          }
+        })
+      } finally {
+        setLoading(false)
+        updateTab((prev) => ({
+          ...prev,
+          isGenerating: false,
+          hasUnread: !isActiveRef.current,
+        }))
+      }
+    }
+  }
+
+  async function handleStopGeneration() {
+    const requestId = activeRequestIdRef.current
+    cancelRequestedRef.current = true
+
+    setLoading(false)
+
+    updateTab((current) => {
+      const messages = current.messages.map((msg) => {
+        if (msg.role === 'assistant') {
+          const tool = parseToolMessage(msg.content)
+          if (tool && (tool.status === 'in_progress' || tool.status === 'pending')) {
+            return { ...msg, content: formatToolMessage(tool.title, 'failed', tool.kind, tool.detail) }
+          }
+        }
+        return msg
+      })
+
+      return {
+        ...current,
+        messages,
+        isGenerating: false,
+      }
+    })
+
+    if (!requestId) {
+      return
+    }
+
+    activeRequestIdRef.current = null
+
+    try {
+      await window.opensmith.ai.streamCancel({ requestId })
+    } catch {
+      // no-op
     }
   }
 
@@ -756,17 +1038,47 @@ export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
             className={
               message.role === 'user'
                 ? 'py-1 border-none ml-auto bg-white/12 shadow-sm ring-1 ring-white/10 rounded-2xl px-4 py-2.5 text-white max-w-[75%] whitespace-pre-wrap'
-                : 'py-1 px-0 border-none mr-auto bg-transparent text-[#b6b6b6] w-full max-w-full'
+                : 'group py-1 px-0 border-none mr-auto bg-transparent text-[#b6b6b6] w-full max-w-full'
             }
           >
             {message.role === 'assistant' ? (
-              <div className="prose prose-invert max-w-none prose-p:my-2 prose-p:leading-7 prose-headings:my-2 prose-strong:text-[#efefef] prose-em:text-[#d6d6d6] prose-code:text-[#d9d9d9] prose-pre:bg-[#111111]/90 prose-pre:border prose-pre:border-white/10 prose-pre:rounded-xl prose-blockquote:border-l-white/25 prose-blockquote:text-[#c9c9c9] prose-table:my-3 prose-table:w-full prose-th:border prose-th:border-white/20 prose-th:px-2 prose-th:py-1 prose-td:border prose-td:border-white/15 prose-td:px-2 prose-td:py-1 prose-hr:border-white/15">
-                <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={markdownComponents}>
-                  {normalizeMarkdownSpacing(message.content || '')}
-                </ReactMarkdown>
-                {loading && index === lastAssistantTextIndex ? (
-                  <span className="inline-block animate-pulse text-[#f0f0f0]">▌</span>
-                ) : null}
+              <div>
+                <div className="prose prose-invert max-w-none prose-p:my-2 prose-p:leading-7 prose-headings:my-2 prose-strong:text-[#efefef] prose-em:text-[#d6d6d6] prose-code:text-[#d9d9d9] prose-pre:bg-[#111111]/90 prose-pre:border prose-pre:border-white/10 prose-pre:rounded-xl prose-blockquote:border-l-white/25 prose-blockquote:text-[#c9c9c9] prose-table:my-3 prose-table:w-full prose-th:border prose-th:border-white/20 prose-th:px-2 prose-th:py-1 prose-td:border prose-td:border-white/15 prose-td:px-2 prose-td:py-1 prose-hr:border-white/15">
+                  <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={markdownComponents}>
+                    {normalizeMarkdownSpacing(message.content || '')}
+                  </ReactMarkdown>
+                  {loading && index === lastAssistantTextIndex ? (
+                    <span className="inline-block animate-pulse text-[#f0f0f0]">▌</span>
+                  ) : null}
+                </div>
+                <div className="mt-1.5 flex items-center justify-between text-[11px] text-[#8a8a8a] opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[#9a9a9a] hover:bg-white/8 hover:text-[#d0d0d0]"
+                      onClick={() => {
+                        void copyToClipboard(message.content || '')
+                      }}
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                      Copy
+                    </button>
+                    {index === lastAssistantTextIndex ? (
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[#9a9a9a] hover:bg-white/8 hover:text-[#d0d0d0]"
+                        onClick={() => {
+                          void handleRetryLastAssistant()
+                        }}
+                        disabled={loading}
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                        Retry
+                      </button>
+                    ) : null}
+                  </div>
+                  <span className="truncate pl-3 text-[#7d7d7d]">{assistantModelLabel}</span>
+                </div>
               </div>
             ) : (
               message.content
@@ -799,6 +1111,16 @@ export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
               className="w-full bg-transparent outline-none border-0 resize-none text-[15px] text-[#ebebeb] placeholder:text-[#7f7f7f] pt-2.5 pb-[6px] px-1 min-h-[72px] max-h-72 overflow-auto"
               value={tab.input}
               onChange={(event) => updateTab((current) => ({ ...current, input: event.target.value }))}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' || event.shiftKey) {
+                  return
+                }
+
+                event.preventDefault()
+                if (!loading && opencodeInstalled && tab.input.trim().length > 0) {
+                  void handleSend()
+                }
+              }}
               placeholder={opencodeInstalled ? 'Ask OpenSmith anything, @ to add files, / for commands' : 'Install OpenCode CLI to enable AI chat'}
               rows={3}
             />
@@ -948,17 +1270,26 @@ export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
                 ) : null}
               </div>
 
-              <button
-                className="bg-[#b0b0b0] text-[#151515] hover:bg-[#c8c8c8] transition rounded-full size-9 flex items-center justify-center text-base font-semibold disabled:opacity-45 disabled:hover:bg-[#b0b0b0]"
-                type="submit"
-                disabled={loading || !opencodeInstalled || tab.input.trim().length === 0}
-              >
-                {loading ? (
-                  <CircleDot className="h-4 w-4 animate-pulse" />
-                ) : (
+              {loading ? (
+                <button
+                  className="bg-[#ef4444] text-white hover:bg-[#dc2626] transition rounded-full size-9 flex items-center justify-center text-base font-semibold"
+                  type="button"
+                  onClick={() => {
+                    void handleStopGeneration()
+                  }}
+                  aria-label="Stop generation"
+                >
+                  <Square className="h-3.5 w-3.5 fill-current" />
+                </button>
+              ) : (
+                <button
+                  className="bg-[#b0b0b0] text-[#151515] hover:bg-[#c8c8c8] transition rounded-full size-9 flex items-center justify-center text-base font-semibold disabled:opacity-45 disabled:hover:bg-[#b0b0b0]"
+                  type="submit"
+                  disabled={!opencodeInstalled || tab.input.trim().length === 0}
+                >
                   <SendHorizontal className="h-4 w-4" />
-                )}
-              </button>
+                </button>
+              )}
             </div>
           </div>
         </div>

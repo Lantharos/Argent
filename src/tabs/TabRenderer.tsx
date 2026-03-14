@@ -25,6 +25,7 @@ export function TabRenderer({ tab, isActive = true, spaceId, cwd, providers, upd
     return (
       <AITab
         tab={tab}
+        isActive={isActive}
         cwd={cwd}
         providers={providers}
         onChange={(next) => updateTab(next)}

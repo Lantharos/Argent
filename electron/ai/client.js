@@ -567,7 +567,8 @@ async function requestViaCodexAppServer(parsed, provider, emitEvent = () => {}) 
   }
 }
 
-async function requestViaOpenCodeAcp(parsed, provider, emitEvent = () => {}) {
+async function requestViaOpenCodeAcp(parsed, provider, emitEvent = () => {}, options = {}) {
+  const { abortSignal } = options
   if (!commandExists('opencode')) {
     throw new Error('OpenCode CLI was not found in PATH. Install OpenCode to use ACP.')
   }
@@ -578,6 +579,18 @@ async function requestViaOpenCodeAcp(parsed, provider, emitEvent = () => {}) {
   })
   const rpc = createJsonRpcConnection(proc)
   let assistantText = ''
+  let aborted = false
+
+  const handleAbort = () => {
+    aborted = true
+    rpc.close()
+  }
+
+  if (abortSignal?.aborted) {
+    handleAbort()
+  } else if (abortSignal) {
+    abortSignal.addEventListener('abort', handleAbort, { once: true })
+  }
 
   const pickToolTitle = (update) => {
     const label =
@@ -634,6 +647,10 @@ async function requestViaOpenCodeAcp(parsed, provider, emitEvent = () => {}) {
   })
 
   try {
+    if (aborted) {
+      throw new Error('Generation cancelled')
+    }
+
     await rpc.request('initialize', {
       protocolVersion: 1,
       clientCapabilities: {
@@ -660,6 +677,9 @@ async function requestViaOpenCodeAcp(parsed, provider, emitEvent = () => {}) {
 
     const content = assistantText.trim()
     if (!content) {
+      if (aborted) {
+        throw new Error('Generation cancelled')
+      }
       throw new Error('OpenCode ACP returned no assistant text')
     }
 
@@ -670,6 +690,9 @@ async function requestViaOpenCodeAcp(parsed, provider, emitEvent = () => {}) {
       usage: promptResult?.usage ?? null,
     }
   } finally {
+    if (abortSignal) {
+      abortSignal.removeEventListener('abort', handleAbort)
+    }
     stopListening()
     rpc.close()
   }
@@ -734,7 +757,7 @@ export async function requestAssistantReply(payload) {
   return requestViaOpenCodeAcp(parsed, provider)
 }
 
-export async function requestAssistantReplyStream(payload, emitEvent = () => {}) {
+export async function requestAssistantReplyStream(payload, emitEvent = () => {}, options = {}) {
   const parsed = chatRequestSchema.parse(payload)
   const provider = listProviders().find((item) => item.id === parsed.providerId)
 
@@ -746,7 +769,7 @@ export async function requestAssistantReplyStream(payload, emitEvent = () => {})
     throw new Error('Only OpenCode ACP is supported in this build.')
   }
 
-  return requestViaOpenCodeAcp(parsed, provider, emitEvent)
+  return requestViaOpenCodeAcp(parsed, provider, emitEvent, options)
 }
 
 async function listCodexModels(cwd) {

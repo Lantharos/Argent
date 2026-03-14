@@ -13,6 +13,8 @@ export function createTab(type: AppTabType, rootPath: string): AppTab {
       providerId: null,
       model: null,
       messages: [],
+      isGenerating: false,
+      hasUnread: false,
     }
   }
 

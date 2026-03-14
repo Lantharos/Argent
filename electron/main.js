@@ -22,6 +22,7 @@ const isDev = !app.isPackaged && Boolean(process.env.VITE_DEV_SERVER_URL)
 
 let windowRef = null
 let terminalManager = null
+const activeAIStreams = new Map()
 
 function createMainWindow() {
   const isWindows = process.platform === 'win32'
@@ -179,6 +180,11 @@ function setupIpc() {
   ipcMain.handle('ai:stream-start', async (event, payload) => {
     const requestId = randomUUID()
     const sender = event.sender
+    const abortController = new AbortController()
+
+    activeAIStreams.set(requestId, {
+      abort: () => abortController.abort(),
+    })
 
     const send = (streamPayload) => {
       if (!sender.isDestroyed()) {
@@ -190,7 +196,7 @@ function setupIpc() {
       try {
         const reply = await requestAssistantReplyStream(payload, (streamEvent) => {
           send({ requestId, event: streamEvent })
-        })
+        }, { abortSignal: abortController.signal })
 
         send({
           requestId,
@@ -207,10 +213,22 @@ function setupIpc() {
             message: error instanceof Error ? error.message : String(error),
           },
         })
+      } finally {
+        activeAIStreams.delete(requestId)
       }
     })()
 
     return { requestId }
+  })
+  ipcMain.handle('ai:stream-cancel', (_, payload) => {
+    const stream = activeAIStreams.get(payload?.requestId)
+    if (!stream) {
+      return false
+    }
+
+    stream.abort()
+    activeAIStreams.delete(payload.requestId)
+    return true
   })
   ipcMain.handle('ai:list-models', async (_, payload) => listAssistantModels(payload))
 

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Loader2 } from 'lucide-react'
 import type { AppSpace, AppTab, AppTabType } from '../../types/opensmith'
 
 type Props = {
@@ -78,7 +79,36 @@ function getIcon(type: AppTabType) {
   }
 }
 
+function AISparkleGlyph({ className }: { className: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z" />
+    </svg>
+  )
+}
+
 function renderTabIcon(tab: AppTab) {
+  if (tab.type === 'ai') {
+
+    const icon = (
+      <span className="relative inline-flex h-[16px] w-[16px] items-center justify-center shrink-0">
+        {tab.isGenerating ? <Loader2 className="absolute h-[14px] w-[14px] animate-spin text-[#d8d8d8]" /> : null}
+        {!tab.isGenerating ? <AISparkleGlyph className={`h-[16px] w-[16px] text-[#969696]`} /> : null}
+      </span>
+    )
+
+    if (tab.hasUnread) {
+      return (
+        <span className="relative inline-flex h-[16px] w-[16px] shrink-0">
+          {icon}
+          <span className="absolute -right-[2px] -top-[2px] h-[6px] w-[6px] rounded-full bg-[#f59e0b]" />
+        </span>
+      )
+    }
+
+    return icon
+  }
+
   if (tab.type === 'browser' && tab.faviconUrl) {
     return <img className="w-[16px] h-[16px] rounded-[4px] shrink-0" src={tab.faviconUrl} alt="" />
   }

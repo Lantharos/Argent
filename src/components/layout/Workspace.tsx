@@ -80,6 +80,16 @@ export function Workspace({
   const currentTab = activeTab
   const isBrowserTab = currentTab.type === 'browser'
 
+  function shouldKeepTabMounted(tab: AppTab) {
+    if (tab.type === 'ai') {
+      return Boolean(tab.isGenerating)
+    }
+    if (tab.type === 'terminal') {
+      return Boolean(tab.sessionId)
+    }
+    return false
+  }
+
   function pruneHotTabs(source: string[], now: number): string[] {
     const openTabIds = new Set(space.tabs.map((tab) => tab.id))
 
@@ -89,16 +99,35 @@ export function Workspace({
       filtered.push(activeId)
     }
 
+    for (const tab of space.tabs) {
+      if (shouldKeepTabMounted(tab) && !filtered.includes(tab.id)) {
+        filtered.push(tab.id)
+      }
+    }
+
     const snoozed = filtered.filter((id) => {
       if (id === activeId) {
         return true
       }
+
+      const tab = space.tabs.find((item) => item.id === id)
+      if (tab && shouldKeepTabMounted(tab)) {
+        return true
+      }
+
       const lastSeen = tabLastSeenRef.current[id] ?? 0
       return now - lastSeen <= TAB_SNOOZE_MS
     })
 
     while (snoozed.length > HOT_TAB_LIMIT) {
-      const candidates = snoozed.filter((id) => id !== activeId)
+      const candidates = snoozed.filter((id) => {
+        if (id === activeId) {
+          return false
+        }
+
+        const tab = space.tabs.find((item) => item.id === id)
+        return !tab || !shouldKeepTabMounted(tab)
+      })
       if (candidates.length === 0) {
         break
       }
@@ -134,7 +163,8 @@ export function Workspace({
   useEffect(() => {
     const now = Date.now()
     tabLastSeenRef.current = { [currentTab.id]: now }
-    setHotTabIds([currentTab.id])
+    const pinnedTabIds = space.tabs.filter((tab) => shouldKeepTabMounted(tab)).map((tab) => tab.id)
+    setHotTabIds(Array.from(new Set([currentTab.id, ...pinnedTabIds])))
   }, [space.id])
 
   useEffect(() => {
