@@ -108,6 +108,17 @@ function App() {
         onCloseTab={(spaceId, tabId) => {
           dispatch({ type: 'close-tab', spaceId, tabId })
         }}
+        onRenameTab={(spaceId, tabId, title) => {
+          dispatch({
+            type: 'update-tab',
+            spaceId,
+            tabId,
+            updater: (tab) => ({
+              ...tab,
+              title,
+            }),
+          })
+        }}
       />
 
       {activeSpace ? (

@@ -11,6 +11,14 @@ type Props = {
   onReorderTabs: (spaceId: string, sourceTabId: string, targetTabId: string) => void
   onCloseTab: (spaceId: string, tabId: string) => void
   onAddTab: (spaceId: string, type: AppTabType) => void
+  onRenameTab: (spaceId: string, tabId: string, title: string) => void
+}
+
+function defaultTabTitle(type: AppTabType) {
+  if (type === 'ai') return 'AI Chat'
+  if (type === 'browser') return 'Browser'
+  if (type === 'terminal') return 'Terminal'
+  return 'Editor'
 }
 
 function SpaceFolderIcon({ collapsed, withPinned }: { collapsed: boolean; withPinned: boolean }) {
@@ -88,9 +96,11 @@ export function SpaceSidebar({
   onReorderTabs,
   onCloseTab,
   onAddTab,
+  onRenameTab,
 }: Props) {
   const [collapsedSpaceIds, setCollapsedSpaceIds] = useState<string[]>([])
   const [dragTabPayload, setDragTabPayload] = useState<{ spaceId: string; tabId: string } | null>(null)
+  const [editingTab, setEditingTab] = useState<{ spaceId: string; tabId: string; value: string } | null>(null)
 
   useEffect(() => {
     const existing = new Set(spaces.map((space) => space.id))
@@ -115,6 +125,17 @@ export function SpaceSidebar({
 
     onReorderTabs(spaceId, dragTabPayload.tabId, targetTabId)
     setDragTabPayload(null)
+  }
+
+  function commitTabRename(spaceId: string, tabId: string, fallbackType: AppTabType) {
+    if (!editingTab || editingTab.spaceId !== spaceId || editingTab.tabId !== tabId) {
+      return
+    }
+
+    const trimmed = editingTab.value.trim()
+    const nextTitle = trimmed || defaultTabTitle(fallbackType)
+    onRenameTab(spaceId, tabId, nextTitle)
+    setEditingTab(null)
   }
 
   return (
@@ -170,22 +191,48 @@ export function SpaceSidebar({
                   <div
                     key={tab.id}
                     className="flex items-center relative group"
-                    draggable
+                    draggable={editingTab?.tabId !== tab.id}
                     onDragStart={() => setDragTabPayload({ spaceId: space.id, tabId: tab.id })}
                     onDragOver={(event) => event.preventDefault()}
                     onDrop={() => onTabDrop(space.id, tab.id)}
                     onDragEnd={() => setDragTabPayload(null)}
                   >
-                    <button
-                      className={`flex-1 flex items-center gap-2 px-2.5 py-1.5 text-[12.5px] rounded-md transition-colors text-left truncate ${isActive && space.activeTabId === tab.id ? 'text-[#e9e9e9] bg-white/12' : 'text-[#9a9a9a] hover:text-[#d7d7d7] hover:bg-white/8'}`}
-                      onClick={() => {
-                        onActivateSpace(space.id)
-                        onSelectTab(space.id, tab.id)
-                      }}
-                    >
-                      {renderTabIcon(tab)}
-                      <span className="truncate">{tab.title}</span>
-                    </button>
+                    {editingTab?.spaceId === space.id && editingTab?.tabId === tab.id ? (
+                      <div className="flex-1 flex items-center gap-2 px-2.5 py-1.5 text-[12.5px] rounded-md bg-white/12">
+                        {renderTabIcon(tab)}
+                        <input
+                          autoFocus
+                          className="w-full bg-transparent border-none outline-none text-[#e9e9e9]"
+                          value={editingTab.value}
+                          onChange={(event) => setEditingTab((current) => (current ? { ...current, value: event.target.value } : current))}
+                          onBlur={() => commitTabRename(space.id, tab.id, tab.type)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                              commitTabRename(space.id, tab.id, tab.type)
+                            }
+                            if (event.key === 'Escape') {
+                              setEditingTab(null)
+                            }
+                          }}
+                        />
+                      </div>
+                    ) : (
+                      <button
+                        className={`flex-1 flex items-center gap-2 px-2.5 py-1.5 text-[12.5px] rounded-md transition-colors text-left truncate ${isActive && space.activeTabId === tab.id ? 'text-[#e9e9e9] bg-white/12' : 'text-[#9a9a9a] hover:text-[#d7d7d7] hover:bg-white/8'}`}
+                        onClick={() => {
+                          onActivateSpace(space.id)
+                          onSelectTab(space.id, tab.id)
+                        }}
+                        onDoubleClick={() => {
+                          if (isActive && space.activeTabId === tab.id) {
+                            setEditingTab({ spaceId: space.id, tabId: tab.id, value: tab.title })
+                          }
+                        }}
+                      >
+                        {renderTabIcon(tab)}
+                        <span className="truncate">{tab.title}</span>
+                      </button>
+                    )}
                     <button className="absolute right-1 p-1 rounded-md opacity-0 group-hover:opacity-100 hover:bg-white/12 text-[#9a9a9a] hover:text-white transition-all cursor-pointer" onClick={() => onCloseTab(space.id, tab.id)}>
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M18 6L6 18M6 6l12 12"/>

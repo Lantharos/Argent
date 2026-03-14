@@ -114,6 +114,17 @@ function parseToolMessage(content: string) {
   }
 }
 
+function summarizeTabTitleFromPrompt(input: string) {
+  const normalized = input.replace(/\s+/g, ' ').trim()
+  if (!normalized) {
+    return 'AI Chat'
+  }
+
+  const firstLine = normalized.split('\n')[0]?.trim() || normalized
+  const base = firstLine.length > 42 ? `${firstLine.slice(0, 42).trimEnd()}...` : firstLine
+  return base || 'AI Chat'
+}
+
 export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
   const [loading, setLoading] = useState(false)
   const [providerMenuOpen, setProviderMenuOpen] = useState(false)
@@ -493,10 +504,15 @@ export function AITab({ tab, cwd, providers, onChange, onSend }: Props) {
       return msg
     })
 
+    const hasUserMessages = cleanMessages.some((msg) => msg.role === 'user' && msg.content.trim().length > 0)
+    const shouldRetitle = !hasUserMessages && (current.title.trim().length === 0 || current.title === 'AI Chat')
+    const nextTitle = shouldRetitle ? summarizeTabTitleFromPrompt(input) : current.title
+
     const withUser: AITabData['messages'] = [...cleanMessages, { role: 'user', content: input }]
 
     updateTab((prev) => ({
       ...prev,
+      title: nextTitle,
       input: '',
       providerId: provider.id,
       messages: withUser,
