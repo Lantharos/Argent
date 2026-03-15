@@ -245,6 +245,8 @@ export function GitTab({ tab, isActive, onChange: _onChange }: Props) {
   const [installed, setInstalled] = useState(false)
   const [isRepo, setIsRepo] = useState(true)
   const [loading, setLoading] = useState(false)
+  const [stagingPath, setStagingPath] = useState<string | null>(null)
+  const [isStagingAll, setIsStagingAll] = useState(false)
 
   const [files, setFiles] = useState<FileStatus[]>([])
   const [commitMessage, setCommitMessage] = useState('')
@@ -258,6 +260,10 @@ export function GitTab({ tab, isActive, onChange: _onChange }: Props) {
   const [selectedCommitHash, setSelectedCommitHash] = useState<string | null>(null)
   const [commitPreview, setCommitPreview] = useState<string | null>(null)
   const [pendingPushCount, setPendingPushCount] = useState(0)
+
+  const [remotes, setRemotes] = useState<string[]>([])
+  const [addingRemote, setAddingRemote] = useState(false)
+  const [newRemoteUrl, setNewRemoteUrl] = useState('')
 
   const [leftPanelWidth, setLeftPanelWidth] = useState(33)
   const [historyListWidth, setHistoryListWidth] = useState(36)
@@ -430,6 +436,19 @@ export function GitTab({ tab, isActive, onChange: _onChange }: Props) {
     setPendingPushCount(parseBranchAheadCount(res.stdout))
   }, [installed, tab.cwd])
 
+  const loadRemotes = useCallback(async () => {
+    if (!installed) return
+    const res = await window.opensmith.git.exec({
+      cwd: tab.cwd,
+      args: ['remote'],
+    })
+    if (res.success && res.stdout) {
+      setRemotes(res.stdout.split('\n').map(s => s.trim()).filter(Boolean))
+    } else {
+      setRemotes([])
+    }
+  }, [installed, tab.cwd])
+
   const refreshStatus = useCallback(async (options?: { includeHistory?: boolean; includePendingPush?: boolean }) => {
     const includeHistory = options?.includeHistory ?? true
     const includePendingPush = options?.includePendingPush ?? true
@@ -438,22 +457,36 @@ export function GitTab({ tab, isActive, onChange: _onChange }: Props) {
 
     setLoading(true)
     try {
+      let isActuallyRepo = false
+      let revRes = await window.opensmith.git.exec({
+        cwd: tab.cwd,
+        args: ['rev-parse', '--is-inside-work-tree']
+      })
+      
+      if (!revRes.success && (revRes.stderr?.includes('dubious ownership') || revRes.error?.includes('dubious ownership'))) {
+        await window.opensmith.git.exec({ cwd: tab.cwd, args: ['config', '--global', '--add', 'safe.directory', '*'] })
+        revRes = await window.opensmith.git.exec({
+          cwd: tab.cwd,
+          args: ['rev-parse', '--is-inside-work-tree']
+        })
+      }
+
+      isActuallyRepo = revRes.success && revRes.stdout?.trim() === 'true'
+      if (!isActuallyRepo) {
+        setFiles([])
+        return
+      }
+
       const res = await window.opensmith.git.exec({
         cwd: tab.cwd,
         args: ['status', '-s', '-uall'],
       })
 
       if (res.success && res.stdout !== undefined) {
-        setIsRepo(true)
         setFiles(parseGitStatus(res.stdout))
-      } else if (
-        res.stderr?.includes('not a git repository') ||
-        res.error?.includes('not a git repository')
-      ) {
-        setIsRepo(false)
       }
 
-      const followUps: Array<Promise<void>> = []
+      const followUps: Array<Promise<void>> = [loadRemotes()]
       if (includeHistory) {
         followUps.push(loadHistory())
       }
@@ -468,7 +501,7 @@ export function GitTab({ tab, isActive, onChange: _onChange }: Props) {
     } finally {
       setLoading(false)
     }
-  }, [installed, loadHistory, loadPendingPush, tab.cwd])
+  }, [installed, loadHistory, loadPendingPush, loadRemotes, tab.cwd])
 
   useEffect(() => {
     async function checkGit() {
@@ -477,22 +510,35 @@ export function GitTab({ tab, isActive, onChange: _onChange }: Props) {
         setInstalled(out.installed)
 
         if (out.installed) {
-          const res = await window.opensmith.git.exec({
+          let isActuallyRepo = false
+          let revRes = await window.opensmith.git.exec({
             cwd: tab.cwd,
-            args: ['status', '-s', '-uall'],
+            args: ['rev-parse', '--is-inside-work-tree']
           })
 
-          if (res.success && res.stdout !== undefined) {
-            setIsRepo(true)
-            setFiles(parseGitStatus(res.stdout))
-          } else if (
-            res.stderr?.includes('not a git repository') ||
-            res.error?.includes('not a git repository')
-          ) {
-            setIsRepo(false)
+          if (!revRes.success && (revRes.stderr?.includes('dubious ownership') || revRes.error?.includes('dubious ownership'))) {
+            await window.opensmith.git.exec({ cwd: tab.cwd, args: ['config', '--global', '--add', 'safe.directory', '*'] })
+            revRes = await window.opensmith.git.exec({
+              cwd: tab.cwd,
+              args: ['rev-parse', '--is-inside-work-tree']
+            })
           }
 
-          await Promise.all([loadHistory(), loadPendingPush()])
+          isActuallyRepo = revRes.success && revRes.stdout?.trim() === 'true'
+          setIsRepo(isActuallyRepo)
+
+          if (isActuallyRepo) {
+            const res = await window.opensmith.git.exec({
+              cwd: tab.cwd,
+              args: ['status', '-s', '-uall'],
+            })
+
+            if (res.success && res.stdout !== undefined) {
+              setFiles(parseGitStatus(res.stdout))
+            }
+
+            await Promise.all([loadHistory(), loadPendingPush(), loadRemotes()])
+          }
         }
       } catch {
         setInstalled(false)
@@ -502,7 +548,7 @@ export function GitTab({ tab, isActive, onChange: _onChange }: Props) {
     }
 
     void checkGit()
-  }, [loadHistory, loadPendingPush, tab.cwd])
+  }, [loadHistory, loadPendingPush, loadRemotes, tab.cwd])
 
   useEffect(() => {
     if (isActive && installed && !checking) {
@@ -512,33 +558,51 @@ export function GitTab({ tab, isActive, onChange: _onChange }: Props) {
 
   async function initRepo() {
     setLoading(true)
+    await window.opensmith.git.exec({ cwd: tab.cwd, args: ['config', '--global', '--add', 'safe.directory', '*'] })
     await window.opensmith.git.exec({ cwd: tab.cwd, args: ['init'] })
-    await refreshStatus()
+    setTimeout(() => {
+      void refreshStatus()
+    }, 100)
   }
 
   async function stageFile(path: string) {
+    if (loading || isStagingAll || stagingPath) return
+    setStagingPath(path)
     await window.opensmith.git.exec({ cwd: tab.cwd, args: ['add', '-A', '--', path] })
     await refreshStatus({ includeHistory: false, includePendingPush: false })
 
     if (selectedFile?.path === path) {
       await viewDiff({ ...selectedFile, isStaged: true, isUnstaged: false })
     }
+    setStagingPath(null)
   }
 
   async function unstageFile(path: string) {
-    await window.opensmith.git.exec({ cwd: tab.cwd, args: ['reset', 'HEAD', path] })
+    if (loading || isStagingAll || stagingPath) return
+    setStagingPath(path)
+    let res = await window.opensmith.git.exec({ cwd: tab.cwd, args: ['reset', 'HEAD', path] })
+    if (!res.success && (res.stderr?.includes("ambiguous argument 'HEAD'") || res.error?.includes("ambiguous argument 'HEAD'"))) {
+      await window.opensmith.git.exec({ cwd: tab.cwd, args: ['rm', '--cached', path] })
+    }
     await refreshStatus({ includeHistory: false, includePendingPush: false })
 
     if (selectedFile?.path === path) {
       await viewDiff({ ...selectedFile, isStaged: false, isUnstaged: true })
     }
+    setStagingPath(null)
   }
 
   async function toggleStageAll() {
+    if (loading || isStagingAll || stagingPath) return
+    setIsStagingAll(true)
     if (allFullyStaged) {
-      const res = await window.opensmith.git.exec({ cwd: tab.cwd, args: ['reset', 'HEAD'] })
+      let res = await window.opensmith.git.exec({ cwd: tab.cwd, args: ['reset', 'HEAD'] })
+      if (!res.success && (res.stderr?.includes("ambiguous argument 'HEAD'") || res.error?.includes("ambiguous argument 'HEAD'"))) {
+        res = await window.opensmith.git.exec({ cwd: tab.cwd, args: ['rm', '-r', '--cached', '.'] })
+      }
       if (!res.success) {
         setCommitError(res.stderr || res.error || 'Failed to unstage all changes')
+        setIsStagingAll(false)
         return
       }
     } else {
@@ -575,6 +639,7 @@ export function GitTab({ tab, isActive, onChange: _onChange }: Props) {
       }
     }
     await refreshStatus({ includeHistory: false, includePendingPush: false })
+    setIsStagingAll(false)
   }
 
   async function viewDiff(file: FileStatus) {
@@ -592,7 +657,10 @@ export function GitTab({ tab, isActive, onChange: _onChange }: Props) {
 
     const args = ['diff', 'HEAD', '--', file.path]
 
-    const res = await window.opensmith.git.exec({ cwd: tab.cwd, args })
+    let res = await window.opensmith.git.exec({ cwd: tab.cwd, args })
+    if (!res.success && (res.stderr?.includes("ambiguous argument 'HEAD'") || res.error?.includes("ambiguous argument 'HEAD'"))) {
+      res = await window.opensmith.git.exec({ cwd: tab.cwd, args: ['diff', '--no-index', '/dev/null', file.path] })
+    }
     setDiffContent(cleanPatchNoise(res.stdout || 'No differences'))
   }
 
@@ -621,6 +689,32 @@ export function GitTab({ tab, isActive, onChange: _onChange }: Props) {
     setCommitPreview(res.stderr || res.error || 'Failed to load commit details')
   }
 
+  async function handleAddRemote() {
+    if (!newRemoteUrl.trim()) {
+      setAddingRemote(false)
+      return
+    }
+    setLoading(true)
+    const res = await window.opensmith.git.exec({
+      cwd: tab.cwd,
+      args: ['remote', 'add', 'origin', newRemoteUrl.trim()],
+    })
+    
+    if (res.success && history.length > 0) {
+      const branchRes = await window.opensmith.git.exec({ cwd: tab.cwd, args: ['branch', '--show-current'] })
+      const branch = branchRes.success && branchRes.stdout ? branchRes.stdout.trim() : 'main'
+      if (branch) {
+        await window.opensmith.git.exec({ cwd: tab.cwd, args: ['push', '-u', 'origin', branch] })
+      }
+    } else if (!res.success) {
+      setCommitError(res.stderr || res.error || 'Failed to add remote')
+    }
+    
+    setAddingRemote(false)
+    setNewRemoteUrl('')
+    await refreshStatus()
+  }
+
   async function handleCommit() {
     if (!commitMessage.trim()) return
 
@@ -647,7 +741,15 @@ export function GitTab({ tab, isActive, onChange: _onChange }: Props) {
     setLoading(true)
 
     await window.opensmith.git.exec({ cwd: tab.cwd, args: ['pull'] })
-    const pushRes = await window.opensmith.git.exec({ cwd: tab.cwd, args: ['push'] })
+    let pushRes = await window.opensmith.git.exec({ cwd: tab.cwd, args: ['push'] })
+
+    if (!pushRes.success && (pushRes.stderr?.includes('has no upstream branch') || pushRes.error?.includes('has no upstream branch') || pushRes.stderr?.includes('setup upstream tracking'))) {
+      const branchRes = await window.opensmith.git.exec({ cwd: tab.cwd, args: ['branch', '--show-current'] })
+      const branch = branchRes.success && branchRes.stdout ? branchRes.stdout.trim() : 'main'
+      if (branch) {
+        pushRes = await window.opensmith.git.exec({ cwd: tab.cwd, args: ['push', '-u', 'origin', branch] })
+      }
+    }
 
     if (pushRes.success) {
       await refreshStatus()
@@ -881,7 +983,8 @@ export function GitTab({ tab, isActive, onChange: _onChange }: Props) {
                     }`}
                   >
                     <button
-                      className={`mr-2 ml-[1px] flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[3px] transition-colors ${
+                      disabled={stagingPath === file.path || isStagingAll}
+                      className={`mr-2 ml-[1px] flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[3px] transition-colors disabled:opacity-50 disabled:cursor-wait ${
                         fullyStaged ? 'bg-white text-black' : 'border border-[#666] hover:border-[#aaa]'
                       }`}
                       onClick={(event) => {
@@ -893,8 +996,12 @@ export function GitTab({ tab, isActive, onChange: _onChange }: Props) {
                         }
                       }}
                     >
-                      {fullyStaged ? <Check className="h-2.5 w-2.5" strokeWidth={3} /> : null}
-                      {!fullyStaged && file.isStaged ? <div className="h-1.5 w-1.5 rounded-sm bg-[#888]" /> : null}
+                      {stagingPath === file.path ? <Loader2 className="h-2.5 w-2.5 animate-spin text-[#888]" /> : (
+                        <>
+                          {fullyStaged ? <Check className="h-2.5 w-2.5" strokeWidth={3} /> : null}
+                          {!fullyStaged && file.isStaged ? <div className="h-1.5 w-1.5 rounded-sm bg-[#888]" /> : null}
+                        </>
+                      )}
                     </button>
 
                     <div className="flex min-w-0 flex-1 items-center gap-1.5 pr-2">
@@ -916,14 +1023,19 @@ export function GitTab({ tab, isActive, onChange: _onChange }: Props) {
             <div className="mb-2 flex items-center justify-between px-1 py-1 text-[11px]">
               <div className="flex items-center gap-2 font-medium uppercase text-[#888]">
                 <button
-                  className={`flex h-3.5 w-3.5 items-center justify-center rounded-[3px] transition-colors ${
+                  disabled={isStagingAll || stagingPath !== null}
+                  className={`flex h-3.5 w-3.5 items-center justify-center rounded-[3px] transition-colors disabled:opacity-50 disabled:cursor-wait ${
                     allFullyStaged ? 'border border-white bg-white text-black' : 'border border-[#666] hover:border-[#aaa]'
                   }`}
                   onClick={() => void toggleStageAll()}
                   title={allFullyStaged ? 'Unstage All Changes' : 'Stage All Changes'}
                 >
-                  {allFullyStaged ? <Check className="h-2.5 w-2.5" strokeWidth={3} /> : null}
-                  {!allFullyStaged && someFullyStaged ? <div className="h-1.5 w-1.5 rounded-sm bg-[#888]" /> : null}
+                  {isStagingAll ? <Loader2 className="h-2.5 w-2.5 animate-spin text-[#888]" /> : (
+                    <>
+                      {allFullyStaged ? <Check className="h-2.5 w-2.5" strokeWidth={3} /> : null}
+                      {!allFullyStaged && someFullyStaged ? <div className="h-1.5 w-1.5 rounded-sm bg-[#888]" /> : null}
+                    </>
+                  )}
                 </button>
                 <span>CHANGES</span>
                 <span className="normal-case text-[#777]">{files.length} changed file{files.length === 1 ? '' : 's'}</span>
@@ -944,6 +1056,31 @@ export function GitTab({ tab, isActive, onChange: _onChange }: Props) {
             </div>
 
             <div className="space-y-2 border-t border-white/10 pt-3">
+            {remotes.length === 0 ? (
+              <div className="mb-2 flex items-center justify-between rounded-md border border-white/10 bg-white/5 px-2 py-1.5 text-[11px]">
+                {addingRemote ? (
+                  <div className="flex w-full gap-1">
+                    <input 
+                      autoFocus
+                      placeholder="https://github.com/user/repo.git..." 
+                      className="flex-1 bg-transparent text-[#e0e0e0] outline-none placeholder:text-[#666]" 
+                      value={newRemoteUrl}
+                      onChange={e => setNewRemoteUrl(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') void handleAddRemote()
+                        if (e.key === 'Escape') setAddingRemote(false)
+                      }}
+                    />
+                    <button onClick={() => setAddingRemote(false)} className="text-[#888] hover:text-white"><X className="h-3 w-3" /></button>
+                  </div>
+                ) : (
+                  <>
+                    <span className="text-[#999]">No remote repository</span>
+                    <button onClick={() => setAddingRemote(true)} className="text-white hover:text-[#d0d0d0] underline decoration-white/30 underline-offset-2">Publish (Add Origin)</button>
+                  </>
+                )}
+              </div>
+            ) : null}
             <textarea
               value={commitMessage}
               onChange={(event) => setCommitMessage(event.target.value)}
