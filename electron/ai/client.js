@@ -130,6 +130,52 @@ function createJsonRpcConnection(proc, requestTimeoutMs = 120000) {
   }
 }
 
+function asPositiveNumber(value) {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return value
+  }
+  if (typeof value === 'string') {
+    const parsed = Number.parseFloat(value.trim())
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed
+    }
+  }
+  return null
+}
+
+function resolveModelContextWindow(item) {
+  const limits = item?.limits && typeof item.limits === 'object' ? item.limits : null
+  const candidates = [
+    item?.contextWindow,
+    item?.contextWindowTokens,
+    item?.maxInputTokens,
+    item?.modelContextWindow,
+    item?.model_context_window,
+    item?.contextWindowTokenLimit,
+    item?.context_window,
+    item?.contextLength,
+    item?.context_length,
+    item?.maxTokens,
+    item?.max_tokens,
+    item?.tokenLimit,
+    item?.token_limit,
+    item?.inputTokenLimit,
+    item?.input_token_limit,
+    limits?.context,
+    limits?.contextWindow,
+    limits?.context_window,
+    limits?.maxInputTokens,
+  ]
+
+  for (const candidate of candidates) {
+    const parsed = asPositiveNumber(candidate)
+    if (parsed !== null) {
+      return parsed
+    }
+  }
+
+  return null
+}
 function isCopilotRuntimeExitError(error) {
   const message = error instanceof Error ? error.message : String(error)
   return message.includes('Client not connected') || message.includes('CLI server exited with code 0')
@@ -580,6 +626,7 @@ async function requestViaOpenCodeAcp(parsed, provider, emitEvent = () => {}, opt
   const rpc = createJsonRpcConnection(proc)
   let assistantText = ''
   let aborted = false
+  let latestUsage = null
 
   const handleAbort = () => {
     aborted = true
@@ -643,6 +690,21 @@ async function requestViaOpenCodeAcp(parsed, provider, emitEvent = () => {}, opt
         title: pickToolTitle(update),
         detail: pickToolDetail(update),
       })
+      return
+    }
+
+    if (update?.sessionUpdate === 'usage_update') {
+      const used = asPositiveNumber(update?.used)
+      const size = asPositiveNumber(update?.size)
+      if (used !== null || size !== null) {
+        latestUsage = {
+          total_tokens: used,
+          model_context_window: size,
+          last_token_usage: {
+            total_tokens: used,
+          },
+        }
+      }
     }
   })
 
@@ -687,7 +749,7 @@ async function requestViaOpenCodeAcp(parsed, provider, emitEvent = () => {}, opt
       id: sessionId,
       content,
       model: parsed.model || provider.model,
-      usage: promptResult?.usage ?? null,
+      usage: latestUsage ?? promptResult?.usage ?? null,
     }
   } finally {
     if (abortSignal) {
@@ -842,11 +904,7 @@ async function listOpenCodeAcpModels(cwd) {
       .map((item) => ({
         id: item?.modelId,
         label: item?.name || item?.modelId,
-        contextWindow:
-          item?.contextWindow ||
-          item?.contextWindowTokens ||
-          item?.maxInputTokens ||
-          null,
+        contextWindow: resolveModelContextWindow(item),
       }))
       .filter((item) => Boolean(item.id))
   } finally {

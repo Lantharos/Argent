@@ -12,6 +12,7 @@ export function createTab(type: AppTabType, rootPath: string): AppTab {
       input: '',
       providerId: null,
       model: null,
+      usageByModel: {},
       messages: [],
       isGenerating: false,
       hasUnread: false,

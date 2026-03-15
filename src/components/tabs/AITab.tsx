@@ -50,6 +50,49 @@ type ModelFamily = {
   variants: Array<ModelOption & { effort: EffortLevel }>
 }
 
+function asNonNegativeNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+    return value
+  }
+  if (typeof value === 'string') {
+    const parsed = Number.parseFloat(value.trim())
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return parsed
+    }
+  }
+  return null
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+  return value as Record<string, unknown>
+}
+
+function normalizeUsageSnapshot(usage: unknown): { usedTokens: number | null; maxTokens: number | null } | null {
+  const usageRecord = asRecord(usage)
+  if (!usageRecord) {
+    return null
+  }
+
+  const lastTokenUsage = asRecord(usageRecord.last_token_usage) ?? asRecord(usageRecord.lastTokenUsage)
+  const usedTokens =
+    asNonNegativeNumber(usageRecord.used) ??
+    asNonNegativeNumber(usageRecord.total_tokens ?? usageRecord.totalTokens) ??
+    asNonNegativeNumber(lastTokenUsage?.total_tokens ?? lastTokenUsage?.totalTokens)
+
+  const maxTokens =
+    asNonNegativeNumber(usageRecord.size) ??
+    asNonNegativeNumber(usageRecord.model_context_window ?? usageRecord.modelContextWindow)
+
+  if (usedTokens === null && maxTokens === null) {
+    return null
+  }
+
+  return { usedTokens, maxTokens }
+}
+
 function parseModelVariant(option: ModelOption) {
   const label = (option.label || option.id).trim()
 
@@ -211,23 +254,10 @@ function summarizeTabTitleFromPrompt(input: string) {
   return base || 'AI Chat'
 }
 
-function formatContextWindow(value: number | null) {
-  if (value == null || !Number.isFinite(value)) {
-    return null
-  }
-  if (value >= 1_000_000) {
-    return `${Math.round(value / 100_000) / 10}M ctx`
-  }
-  if (value >= 1_000) {
-    return `${Math.round(value / 100) / 10}k ctx`
-  }
-  return `${value} ctx`
-}
-
 export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }: Props) {
   const [loading, setLoading] = useState(false)
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
-  const [activeMetaPopover, setActiveMetaPopover] = useState<'local' | 'access' | null>(null)
+  const [activeMetaPopover, setActiveMetaPopover] = useState<'local' | 'access' | 'context' | null>(null)
   const modelMenuRef = useRef<HTMLDivElement | null>(null)
 
   const [modelOptions, setModelOptions] = useState<ModelOption[]>([])
@@ -336,20 +366,53 @@ export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }
 
   const selectedModelContextWindow = useMemo(() => {
     const direct = modelOptions.find((item) => item.id === selectedModelValue)?.contextWindow
-    if (typeof direct === 'number' && Number.isFinite(direct)) {
-      return direct
+    const parsedDirect = asNonNegativeNumber(direct)
+    if (parsedDirect !== null) {
+      return parsedDirect
     }
 
     if (selectedProvider) {
       const cached = sharedModelOptionsCache[selectedProvider.id] ?? []
       const fromCache = cached.find((item) => item.id === selectedModelValue)?.contextWindow
-      if (typeof fromCache === 'number' && Number.isFinite(fromCache)) {
-        return fromCache
+      const parsedFromCache = asNonNegativeNumber(fromCache)
+      if (parsedFromCache !== null) {
+        return parsedFromCache
       }
     }
 
     return null
   }, [modelOptions, selectedProvider, selectedModelValue])
+
+  const selectedModelUsage = useMemo(() => {
+    const modelId = selectedModelValue || selectedProvider?.model || ''
+    if (!modelId) {
+      return null
+    }
+    const usageByModel = tab.usageByModel ?? {}
+    return usageByModel[modelId] ?? null
+  }, [selectedModelValue, selectedProvider, tab.usageByModel])
+
+  const resolvedContextWindow = useMemo(() => {
+    if (typeof selectedModelContextWindow === 'number' && Number.isFinite(selectedModelContextWindow) && selectedModelContextWindow > 0) {
+      return selectedModelContextWindow
+    }
+    const maxFromUsage = selectedModelUsage?.maxTokens
+    if (typeof maxFromUsage === 'number' && Number.isFinite(maxFromUsage) && maxFromUsage > 0) {
+      return maxFromUsage
+    }
+    return null
+  }, [selectedModelContextWindow, selectedModelUsage])
+
+  const estimatedTokens = useMemo(() => {
+    let charCount = 0
+    for (const msg of tab.messages) {
+      charCount += msg.content.length
+    }
+    charCount += tab.input.length
+    return 500 + Math.ceil(charCount / 4)
+  }, [tab.messages, tab.input])
+
+  const usedTokens = selectedModelUsage?.usedTokens ?? estimatedTokens
 
   const assistantModelLabel = useMemo(() => {
     return selectedModelLabel || selectedModelValue || selectedProvider?.model || 'Model'
@@ -546,6 +609,18 @@ export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }
         activeRequestIdRef.current = null
         setLoading(false)
 
+        const snapshot = normalizeUsageSnapshot(event.reply?.usage)
+        const modelId = event.reply?.model || tabRef.current.model || selectedProvider?.model || null
+        if (snapshot && modelId) {
+          updateTab((current) => ({
+            ...current,
+            usageByModel: {
+              ...(current.usageByModel ?? {}),
+              [modelId]: snapshot,
+            },
+          }))
+        }
+
         updateTab((current) => {
           const messages = current.messages.map((msg) => {
             if (msg.role === 'assistant') {
@@ -574,7 +649,7 @@ export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }
     })
 
     return unsubscribe
-  }, [appendAssistantDelta, updateTab])
+  }, [appendAssistantDelta, selectedProvider?.model, updateTab])
 
   useEffect(() => {
     function handlePointerDown(event: PointerEvent) {
@@ -1256,11 +1331,51 @@ export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }
             </div>
 
             <div className="flex items-center gap-1.5">
-              {formatContextWindow(selectedModelContextWindow) ? (
-                <span className="text-xs text-[#b5b5b5] inline-flex items-center gap-1 rounded-full border border-[#3a3a3a] bg-[#1b1b1b] px-2 py-1">
-                  {formatContextWindow(selectedModelContextWindow)}
-                </span>
-              ) : null}
+              {(() => {
+                const limit = resolvedContextWindow ?? 0
+                const validLimit = limit > 0
+                if (!validLimit) {
+                  return null
+                }
+                const percentage = Math.min(100, Math.max(0, (usedTokens / limit) * 100))
+                const circumference = 2 * Math.PI * 6 // r=6
+                const strokeDashoffset = circumference - (percentage / 100) * circumference
+                
+                return (
+                  <div className="relative">
+                    <button
+                      type="button"
+                      className="text-xs text-[#aaaaaa] inline-flex items-center justify-center rounded-full p-1.5 hover:bg-[#242424] transition-colors gap-1"
+                      onClick={() => setActiveMetaPopover((prev) => (prev === 'context' ? null : 'context'))}
+                      aria-label="Context window limit"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 14 14" className="-rotate-90">
+                        <circle cx="7" cy="7" r="6" strokeWidth="2" fill="none" className="stroke-[#3a3a3a]" />
+                        <circle 
+                          cx="7" cy="7" r="6" strokeWidth="2" fill="none" 
+                          className={percentage > 90 ? 'stroke-[#ef4444]' : percentage > 75 ? 'stroke-[#eab308]' : 'stroke-[#b5b5b5]'} 
+                          strokeDasharray={circumference} 
+                          strokeDashoffset={strokeDashoffset} 
+                          strokeLinecap="round" 
+                        />
+                      </svg>
+                    </button>
+                    {activeMetaPopover === 'context' ? (
+                      <div className="absolute right-0 bottom-[calc(100%+8px)] w-[250px] rounded-xl border border-[#353535] bg-[#161616] px-3.5 py-3 text-[12px] leading-relaxed shadow-[0_14px_30px_rgba(0,0,0,0.45)] z-40 text-left" role="status">
+                        <div className="font-medium text-[#c0c0c0] mb-0.5">Context window</div>
+                        <>
+                          <div className="font-medium text-[#e0e0e0] text-[13px] mb-1">
+                            {percentage.toFixed(1)}% used <span className="text-[#888] font-normal">({(100 - percentage).toFixed(1)}% left)</span>
+                          </div>
+                          <div className="text-[#888]">
+                            {(usedTokens / 1000).toFixed(1)}k / {(limit / 1000).toFixed(1)}k tokens used
+                          </div>
+                        </>
+                      </div>
+                    ) : null}
+                  </div>
+                )
+              })()}
               <div className="relative">
                 <button
                   type="button"

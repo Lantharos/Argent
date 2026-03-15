@@ -54,6 +54,7 @@ export type AITabData = AppTabBase & {
   type: 'ai'
   providerId: string | null
   model: string | null
+  usageByModel?: Record<string, { usedTokens: number | null; maxTokens: number | null }>
   messages: ChatMessage[]
   input: string
   isGenerating?: boolean
