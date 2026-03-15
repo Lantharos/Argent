@@ -8,6 +8,7 @@ import readline from 'node:readline'
 
 const execAsync = promisify(exec)
 let copilotRuntimePromise = null
+const openCodeRuntimeByCwd = new Map()
 
 function commandExists(command) {
   const checker = process.platform === 'win32' ? 'where' : 'which'
@@ -143,6 +144,19 @@ function asPositiveNumber(value) {
   return null
 }
 
+function asNonNegativeNumber(value) {
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+    return value
+  }
+  if (typeof value === 'string') {
+    const parsed = Number.parseFloat(value.trim())
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return parsed
+    }
+  }
+  return null
+}
+
 function resolveModelContextWindow(item) {
   const limits = item?.limits && typeof item.limits === 'object' ? item.limits : null
   const candidates = [
@@ -179,6 +193,98 @@ function resolveModelContextWindow(item) {
 function isCopilotRuntimeExitError(error) {
   const message = error instanceof Error ? error.message : String(error)
   return message.includes('Client not connected') || message.includes('CLI server exited with code 0')
+}
+
+function isOpenCodeRuntimeExitError(error) {
+  const message = error instanceof Error ? error.message : String(error)
+  return (
+    message.includes('JSON-RPC process exited') ||
+    message.includes('EPIPE') ||
+    message.includes('write after end') ||
+    message.includes('socket hang up')
+  )
+}
+
+function invalidateOpenCodeRuntime(cwd) {
+  const workingDirectory = path.resolve(cwd || process.cwd())
+  const runtimePromise = openCodeRuntimeByCwd.get(workingDirectory)
+  openCodeRuntimeByCwd.delete(workingDirectory)
+
+  if (runtimePromise) {
+    runtimePromise
+      .then((runtime) => {
+        runtime.rpc.close()
+      })
+      .catch(() => {
+        // no-op
+      })
+  }
+}
+
+async function getOpenCodeRuntime(cwd) {
+  if (!commandExists('opencode')) {
+    throw new Error('OpenCode CLI was not found in PATH. Install OpenCode to use ACP.')
+  }
+
+  const workingDirectory = path.resolve(cwd || process.cwd())
+  const existing = openCodeRuntimeByCwd.get(workingDirectory)
+  if (existing) {
+    return existing
+  }
+
+  const runtimePromise = (async () => {
+    const proc = spawnCliProcess('opencode', ['acp', '--cwd', workingDirectory], {
+      cwd: workingDirectory,
+    })
+    const rpc = createJsonRpcConnection(proc)
+
+    proc.once('exit', () => {
+      if (openCodeRuntimeByCwd.get(workingDirectory) === runtimePromise) {
+        openCodeRuntimeByCwd.delete(workingDirectory)
+      }
+    })
+
+    const initializeResult = await rpc.request('initialize', {
+      protocolVersion: 1,
+      clientCapabilities: {
+        _meta: {
+          'terminal-auth': false,
+        },
+      },
+    })
+
+    return {
+      cwd: workingDirectory,
+      rpc,
+      knownSessions: new Set(),
+      capabilities: initializeResult?.agentCapabilities || null,
+    }
+  })().catch((error) => {
+    if (openCodeRuntimeByCwd.get(workingDirectory) === runtimePromise) {
+      openCodeRuntimeByCwd.delete(workingDirectory)
+    }
+    throw error
+  })
+
+  openCodeRuntimeByCwd.set(workingDirectory, runtimePromise)
+  return runtimePromise
+}
+
+async function withOpenCodeRuntime(cwd, task) {
+  const workingDirectory = path.resolve(cwd || process.cwd())
+  let runtime = await getOpenCodeRuntime(workingDirectory)
+
+  try {
+    return await task(runtime)
+  } catch (error) {
+    if (!isOpenCodeRuntimeExitError(error)) {
+      throw error
+    }
+
+    invalidateOpenCodeRuntime(workingDirectory)
+    runtime = await getOpenCodeRuntime(workingDirectory)
+    return task(runtime)
+  }
 }
 
 function ensureCopilotJsonRpcShim() {
@@ -615,149 +721,235 @@ async function requestViaCodexAppServer(parsed, provider, emitEvent = () => {}) 
 
 async function requestViaOpenCodeAcp(parsed, provider, emitEvent = () => {}, options = {}) {
   const { abortSignal } = options
-  if (!commandExists('opencode')) {
-    throw new Error('OpenCode CLI was not found in PATH. Install OpenCode to use ACP.')
-  }
-
   const workingDirectory = parsed.cwd || process.cwd()
-  const proc = spawnCliProcess('opencode', ['acp', '--cwd', workingDirectory], {
-    cwd: workingDirectory,
-  })
-  const rpc = createJsonRpcConnection(proc)
-  let assistantText = ''
-  let aborted = false
-  let latestUsage = null
+  return withOpenCodeRuntime(workingDirectory, async (runtime) => {
+    const rpc = runtime.rpc
+    let assistantText = ''
+    let aborted = false
+    let activeSessionId = null
+    let latestUsage = null
+    const toolStatusById = new Map()
 
-  const handleAbort = () => {
-    aborted = true
-    rpc.close()
-  }
-
-  if (abortSignal?.aborted) {
-    handleAbort()
-  } else if (abortSignal) {
-    abortSignal.addEventListener('abort', handleAbort, { once: true })
-  }
-
-  const pickToolTitle = (update) => {
-    const label =
-      update?.title ||
-      update?.toolName ||
-      update?.name ||
-      update?.tool?.name ||
-      update?.kind ||
-      'Tool call'
-    return typeof label === 'string' && label.trim().length > 0 ? label : 'Tool call'
-  }
-
-  const pickToolDetail = (update) => {
-    const candidates = [
-      update?.description,
-      update?.message,
-      update?.command,
-      update?.path,
-      update?.args && Array.isArray(update.args) ? update.args.join(' ') : null,
-      update?.toolInput && typeof update.toolInput === 'object' ? JSON.stringify(update.toolInput) : null,
-    ]
-    const detail = candidates.find((value) => typeof value === 'string' && value.trim().length > 0)
-    if (!detail) {
-      return null
-    }
-    return detail.length > 180 ? `${detail.slice(0, 180)}...` : detail
-  }
-
-  const stopListening = rpc.onNotification((msg) => {
-    if (msg.method !== 'session/update') {
-      return
+    const STATUS_ORDER = {
+      pending: 1,
+      in_progress: 2,
+      completed: 3,
+      failed: 3,
     }
 
-    const update = msg?.params?.update
-    if (update?.sessionUpdate === 'agent_message_chunk') {
-      const text = update?.content?.text
-      if (typeof text === 'string') {
-        assistantText += text
-        emitEvent({ type: 'text-delta', delta: text })
+    const normalizeToolStatus = (update) => {
+      const raw = typeof update?.status === 'string' ? update.status : null
+      if (raw === 'pending' || raw === 'in_progress' || raw === 'completed' || raw === 'failed') {
+        return raw
       }
-      return
+      if (update?.sessionUpdate === 'tool_call') {
+        return 'pending'
+      }
+      return 'in_progress'
     }
 
-    if (update?.sessionUpdate === 'tool_call' || update?.sessionUpdate === 'tool_call_update') {
-      emitEvent({
-        type: 'tool',
-        id: update?.toolCallId || null,
-        status: update?.status || 'in_progress',
-        kind: update?.kind || 'other',
-        title: pickToolTitle(update),
-        detail: pickToolDetail(update),
-      })
-      return
+    const handleAbort = () => {
+      aborted = true
+      if (activeSessionId) {
+        rpc.notify('session/cancel', { sessionId: activeSessionId })
+      }
     }
 
-    if (update?.sessionUpdate === 'usage_update') {
-      const used = asPositiveNumber(update?.used)
-      const size = asPositiveNumber(update?.size)
-      if (used !== null || size !== null) {
-        latestUsage = {
-          total_tokens: used,
-          model_context_window: size,
-          last_token_usage: {
+    if (abortSignal?.aborted) {
+      handleAbort()
+    } else if (abortSignal) {
+      abortSignal.addEventListener('abort', handleAbort, { once: true })
+    }
+
+    const pickToolTitle = (update) => {
+      const label =
+        update?.title ||
+        update?.toolName ||
+        update?.name ||
+        update?.tool?.name ||
+        update?.kind ||
+        'Tool call'
+      return typeof label === 'string' && label.trim().length > 0 ? label : 'Tool call'
+    }
+
+    const pickToolDetail = (update) => {
+      const candidates = [
+        update?.description,
+        update?.message,
+        update?.command,
+        update?.path,
+        update?.args && Array.isArray(update.args) ? update.args.join(' ') : null,
+        update?.toolInput && typeof update.toolInput === 'object' ? JSON.stringify(update.toolInput) : null,
+      ]
+      const detail = candidates.find((value) => typeof value === 'string' && value.trim().length > 0)
+      if (!detail) {
+        return null
+      }
+      return detail.length > 180 ? `${detail.slice(0, 180)}...` : detail
+    }
+
+    const stopListening = rpc.onNotification((msg) => {
+      if (msg.method !== 'session/update') {
+        return
+      }
+
+      const updateSessionId = msg?.params?.sessionId
+      if (!activeSessionId || updateSessionId !== activeSessionId) {
+        return
+      }
+
+      const update = msg?.params?.update
+      if (update?.sessionUpdate === 'agent_message_chunk') {
+        const text = update?.content?.text
+        if (typeof text === 'string') {
+          assistantText += text
+          emitEvent({ type: 'text-delta', delta: text })
+        }
+        return
+      }
+
+      if (update?.sessionUpdate === 'agent_thought_chunk') {
+        const text = update?.content?.text
+        if (typeof text === 'string') {
+          emitEvent({ type: 'thought-delta', delta: text })
+        }
+        return
+      }
+
+      if (update?.sessionUpdate === 'tool_call' || update?.sessionUpdate === 'tool_call_update') {
+        const toolId = update?.toolCallId || null
+        const normalizedStatus = normalizeToolStatus(update)
+        if (toolId) {
+          const prev = toolStatusById.get(toolId)
+          if (prev && STATUS_ORDER[normalizedStatus] < STATUS_ORDER[prev]) {
+            return
+          }
+          toolStatusById.set(toolId, normalizedStatus)
+        }
+
+        emitEvent({
+          type: 'tool',
+          id: toolId,
+          status: normalizedStatus,
+          kind: update?.kind || 'other',
+          title: pickToolTitle(update),
+          detail: pickToolDetail(update),
+        })
+        return
+      }
+
+      if (update?.sessionUpdate === 'usage_update') {
+        const used = asNonNegativeNumber(update?.used)
+        const size = asNonNegativeNumber(update?.size)
+        if (used !== null || size !== null) {
+          latestUsage = {
             total_tokens: used,
-          },
+            model_context_window: size,
+            last_token_usage: {
+              total_tokens: used,
+            },
+          }
         }
       }
-    }
-  })
-
-  try {
-    if (aborted) {
-      throw new Error('Generation cancelled')
-    }
-
-    await rpc.request('initialize', {
-      protocolVersion: 1,
-      clientCapabilities: {
-        _meta: {
-          'terminal-auth': false,
-        },
-      },
     })
 
-    const sessionResult = await rpc.request('session/new', {
-      cwd: workingDirectory,
-      mcpServers: [],
-    })
-
-    const sessionId = sessionResult?.sessionId
-    if (!sessionId) {
-      throw new Error('OpenCode ACP returned no session id')
-    }
-
-    const promptResult = await rpc.request('session/prompt', {
-      sessionId,
-      prompt: [{ type: 'text', text: toTranscript(parsed.messages) }],
-    })
-
-    const content = assistantText.trim()
-    if (!content) {
+    try {
       if (aborted) {
         throw new Error('Generation cancelled')
       }
-      throw new Error('OpenCode ACP returned no assistant text')
-    }
 
-    return {
-      id: sessionId,
-      content,
-      model: parsed.model || provider.model,
-      usage: latestUsage ?? promptResult?.usage ?? null,
+      let sessionResult = null
+      let resumedSession = false
+      if (parsed.sessionId) {
+        if (runtime.knownSessions.has(parsed.sessionId)) {
+          sessionResult = { sessionId: parsed.sessionId }
+          resumedSession = true
+        } else {
+          const canResume = Boolean(runtime?.capabilities?.sessionCapabilities?.resume)
+          try {
+            if (canResume) {
+              sessionResult = await rpc.request('session/resume', {
+                sessionId: parsed.sessionId,
+                cwd: workingDirectory,
+                mcpServers: [],
+              })
+            } else {
+              sessionResult = await rpc.request('session/load', {
+                sessionId: parsed.sessionId,
+                cwd: workingDirectory,
+                mcpServers: [],
+              })
+            }
+          } catch {
+            if (canResume) {
+              try {
+                sessionResult = await rpc.request('session/load', {
+                  sessionId: parsed.sessionId,
+                  cwd: workingDirectory,
+                  mcpServers: [],
+                })
+              } catch {
+                sessionResult = null
+              }
+            } else {
+              sessionResult = null
+            }
+          }
+
+          if (sessionResult) {
+            runtime.knownSessions.add(parsed.sessionId)
+            resumedSession = true
+          } else {
+            runtime.knownSessions.delete(parsed.sessionId)
+          }
+        }
+      }
+
+      if (!sessionResult) {
+        sessionResult = await rpc.request('session/new', {
+          cwd: workingDirectory,
+          mcpServers: [],
+        })
+      }
+
+      const sessionId = sessionResult?.sessionId
+      if (!sessionId) {
+        throw new Error('OpenCode ACP returned no session id')
+      }
+      activeSessionId = sessionId
+      runtime.knownSessions.add(sessionId)
+
+      const lastUser = [...parsed.messages]
+        .reverse()
+        .find((message) => message.role === 'user' && message.content.trim().length > 0)
+      const promptText = resumedSession && lastUser ? lastUser.content : toTranscript(parsed.messages)
+
+      const promptResult = await rpc.request('session/prompt', {
+        sessionId,
+        prompt: [{ type: 'text', text: promptText }],
+      })
+
+      const content = assistantText.trim()
+      if (!content) {
+        if (aborted) {
+          throw new Error('Generation cancelled')
+        }
+        throw new Error('OpenCode ACP returned no assistant text')
+      }
+
+      return {
+        id: sessionId,
+        content,
+        model: parsed.model || provider.model,
+        usage: latestUsage ?? promptResult?.usage ?? null,
+      }
+    } finally {
+      if (abortSignal) {
+        abortSignal.removeEventListener('abort', handleAbort)
+      }
+      stopListening()
     }
-  } finally {
-    if (abortSignal) {
-      abortSignal.removeEventListener('abort', handleAbort)
-    }
-    stopListening()
-    rpc.close()
-  }
+  })
 }
 
 async function requestViaCopilotSdk(parsed, provider, emitEvent = () => {}) {
@@ -871,25 +1063,10 @@ async function listCodexModels(cwd) {
 }
 
 async function listOpenCodeAcpModels(cwd) {
-  if (!commandExists('opencode')) {
-    return []
-  }
-
   const workingDirectory = cwd || process.cwd()
-  const proc = spawnCliProcess('opencode', ['acp', '--cwd', workingDirectory], {
-    cwd: workingDirectory,
-  })
-  const rpc = createJsonRpcConnection(proc)
-
   try {
-    await rpc.request('initialize', {
-      protocolVersion: 1,
-      clientCapabilities: {
-        _meta: {
-          'terminal-auth': false,
-        },
-      },
-    })
+    return withOpenCodeRuntime(workingDirectory, async (runtime) => {
+      const rpc = runtime.rpc
 
     const sessionResult = await rpc.request('session/new', {
       cwd: workingDirectory,
@@ -907,8 +1084,9 @@ async function listOpenCodeAcpModels(cwd) {
         contextWindow: resolveModelContextWindow(item),
       }))
       .filter((item) => Boolean(item.id))
-  } finally {
-    rpc.close()
+    })
+  } catch {
+    return []
   }
 }
 

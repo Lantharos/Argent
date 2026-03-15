@@ -26,6 +26,7 @@ export type AIReply = {
 
 export type AIStreamEvent =
   | { type: 'text-delta'; delta: string }
+  | { type: 'thought-delta'; delta: string }
   | {
       type: 'tool'
       id: string | null
@@ -54,6 +55,7 @@ export type AITabData = AppTabBase & {
   type: 'ai'
   providerId: string | null
   model: string | null
+  acpSessionId?: string | null
   usageByModel?: Record<string, { usedTokens: number | null; maxTokens: number | null }>
   messages: ChatMessage[]
   input: string
@@ -131,6 +133,7 @@ declare global {
           model?: string
           temperature?: number
           cwd?: string
+          sessionId?: string
         }) => Promise<AIReply>
         streamStart: (payload: {
           providerId: string
@@ -138,6 +141,7 @@ declare global {
           model?: string
           temperature?: number
           cwd?: string
+          sessionId?: string
         }) => Promise<{ requestId: string }>
         streamCancel: (payload: { requestId: string }) => Promise<boolean>
         listModels: (payload: { providerId: string; cwd?: string }) => Promise<Array<{ id: string; label: string; contextWindow?: number | null }>>

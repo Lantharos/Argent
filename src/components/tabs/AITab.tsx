@@ -218,6 +218,23 @@ function parseToolMessage(content: string) {
   }
 }
 
+function formatThoughtMessage(content: string) {
+  return `[[thought]]${encodeURIComponent(content)}`
+}
+
+function parseThoughtMessage(content: string) {
+  if (!content.startsWith('[[thought]]')) {
+    return null
+  }
+
+  const raw = content.slice('[[thought]]'.length)
+  try {
+    return decodeURIComponent(raw)
+  } catch {
+    return raw
+  }
+}
+
 function compactConversation(messages: { role: 'user' | 'assistant'; content: string }[]) {
   if (messages.length <= 12) {
     return messages
@@ -268,6 +285,8 @@ export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }
   const activeRequestIdRef = useRef<string | null>(null)
   const cancelRequestedRef = useRef(false)
   const toolMessageIndexByIdRef = useRef<Record<string, number>>({})
+  const pendingAssistantTextRef = useRef('')
+  const flushTimerRef = useRef<number | null>(null)
   const tabRef = useRef(tab)
   const onChangeRef = useRef(onChange)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -442,7 +461,7 @@ export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }
 
     for (let index = tab.messages.length - 1; index >= 0; index -= 1) {
       const message = tab.messages[index]
-      if (message.role === 'assistant' && !parseToolMessage(message.content)) {
+      if (message.role === 'assistant' && !parseToolMessage(message.content) && !parseThoughtMessage(message.content)) {
         return index
       }
     }
@@ -491,9 +510,12 @@ export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }
     updateTab((current) => {
       const messages = [...current.messages]
       const last = messages.at(-1)
-      const isToolLine = last?.role === 'assistant' && typeof last?.content === 'string' && last.content.startsWith('[[tool]]')
+      const isMetaLine =
+        last?.role === 'assistant' &&
+        typeof last?.content === 'string' &&
+        (last.content.startsWith('[[tool]]') || last.content.startsWith('[[thought]]'))
 
-      if (last && last.role === 'assistant' && !isToolLine) {
+      if (last && last.role === 'assistant' && !isMetaLine) {
         messages[messages.length - 1] = {
           ...last,
           content: `${last.content}${delta}`,
@@ -508,6 +530,39 @@ export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }
       }
     })
   }, [updateTab])
+
+  const scheduleAssistantFlush = useCallback(() => {
+    if (flushTimerRef.current !== null) {
+      return
+    }
+
+    const flush = () => {
+      flushTimerRef.current = null
+      const pending = pendingAssistantTextRef.current
+      if (!pending) {
+        return
+      }
+
+      const chunkSize = pending.length > 120 ? 10 : pending.length > 60 ? 6 : 3
+      const nextChunk = pending.slice(0, chunkSize)
+      pendingAssistantTextRef.current = pending.slice(chunkSize)
+      appendAssistantDelta(nextChunk)
+
+      if (pendingAssistantTextRef.current.length > 0) {
+        flushTimerRef.current = window.setTimeout(flush, 16)
+      }
+    }
+
+    flushTimerRef.current = window.setTimeout(flush, 16)
+  }, [appendAssistantDelta])
+
+  const enqueueAssistantDelta = useCallback((delta: string) => {
+    if (!delta) {
+      return
+    }
+    pendingAssistantTextRef.current += delta
+    scheduleAssistantFlush()
+  }, [scheduleAssistantFlush])
 
   const markdownComponents = useMemo<Components>(
     () => ({
@@ -542,8 +597,36 @@ export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }
       }
 
       const event = payload.event as AIStreamEvent
+      if (event.type === 'thought-delta') {
+        if (!event.delta) {
+          return
+        }
+
+        updateTab((current) => {
+          const messages = [...current.messages]
+          const last = messages.at(-1)
+          const lastThought =
+            last?.role === 'assistant' && typeof last?.content === 'string' ? parseThoughtMessage(last.content) : null
+
+          if (typeof lastThought === 'string') {
+            messages[messages.length - 1] = {
+              role: 'assistant',
+              content: formatThoughtMessage(`${lastThought}${event.delta}`),
+            }
+          } else {
+            messages.push({ role: 'assistant', content: formatThoughtMessage(event.delta) })
+          }
+
+          return {
+            ...current,
+            messages,
+          }
+        })
+        return
+      }
+
       if (event.type === 'text-delta') {
-        appendAssistantDelta(event.delta)
+        enqueueAssistantDelta(event.delta)
         return
       }
 
@@ -582,7 +665,9 @@ export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }
         const wasCancelled = /cancel|aborted/i.test(event.message)
 
         updateTab((current) => {
-          const messages = current.messages.map((msg) => {
+          const messages = current.messages
+            .filter((msg) => !(msg.role === 'assistant' && parseThoughtMessage(msg.content) !== null))
+            .map((msg) => {
             if (msg.role === 'assistant') {
               const tool = parseToolMessage(msg.content)
               if (tool && (tool.status === 'in_progress' || tool.status === 'pending')) {
@@ -590,7 +675,7 @@ export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }
               }
             }
             return msg
-          })
+            })
           return {
             ...current,
             messages,
@@ -600,7 +685,7 @@ export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }
         })
 
         if (!wasCancelled) {
-          appendAssistantDelta(`\n\nError: ${event.message}`)
+          enqueueAssistantDelta(`\n\nError: ${event.message}`)
         }
         return
       }
@@ -608,6 +693,13 @@ export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }
       if (event.type === 'done') {
         activeRequestIdRef.current = null
         setLoading(false)
+
+        if (event.reply?.id) {
+          updateTab((current) => ({
+            ...current,
+            acpSessionId: event.reply.id,
+          }))
+        }
 
         const snapshot = normalizeUsageSnapshot(event.reply?.usage)
         const modelId = event.reply?.model || tabRef.current.model || selectedProvider?.model || null
@@ -622,7 +714,9 @@ export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }
         }
 
         updateTab((current) => {
-          const messages = current.messages.map((msg) => {
+          const messages = current.messages
+            .filter((msg) => !(msg.role === 'assistant' && parseThoughtMessage(msg.content) !== null))
+            .map((msg) => {
             if (msg.role === 'assistant') {
               const tool = parseToolMessage(msg.content)
               if (tool && (tool.status === 'in_progress' || tool.status === 'pending')) {
@@ -630,7 +724,7 @@ export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }
               }
             }
             return msg
-          })
+            })
           return {
             ...current,
             messages,
@@ -643,13 +737,20 @@ export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }
         const current = tabRef.current
         const last = current.messages.at(-1)
         if ((!last || last.role !== 'assistant' || !last.content.trim()) && reply.content) {
-          appendAssistantDelta(reply.content)
+          enqueueAssistantDelta(reply.content)
         }
       }
     })
 
-    return unsubscribe
-  }, [appendAssistantDelta, selectedProvider?.model, updateTab])
+    return () => {
+      unsubscribe()
+      if (flushTimerRef.current !== null) {
+        window.clearTimeout(flushTimerRef.current)
+        flushTimerRef.current = null
+      }
+      pendingAssistantTextRef.current = ''
+    }
+  }, [enqueueAssistantDelta, selectedProvider?.model, updateTab])
 
   useEffect(() => {
     function handlePointerDown(event: PointerEvent) {
@@ -777,15 +878,17 @@ export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }
       return
     }
 
-    const cleanMessages = current.messages.map((msg) => {
-      if (msg.role === 'assistant') {
-        const tool = parseToolMessage(msg.content)
-        if (tool && (tool.status === 'in_progress' || tool.status === 'pending')) {
-          return { ...msg, content: formatToolMessage(tool.title, 'completed', tool.kind, tool.detail) }
+    const cleanMessages = current.messages
+      .filter((msg) => !(msg.role === 'assistant' && parseThoughtMessage(msg.content) !== null))
+      .map((msg) => {
+        if (msg.role === 'assistant') {
+          const tool = parseToolMessage(msg.content)
+          if (tool && (tool.status === 'in_progress' || tool.status === 'pending')) {
+            return { ...msg, content: formatToolMessage(tool.title, 'completed', tool.kind, tool.detail) }
+          }
         }
-      }
-      return msg
-    })
+        return msg
+      })
 
     const hasUserMessages = cleanMessages.some((msg) => msg.role === 'user' && msg.content.trim().length > 0)
     const shouldRetitle = !hasUserMessages && (current.title.trim().length === 0 || current.title === 'AI Chat')
@@ -826,6 +929,7 @@ export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }
         messages: usable,
         cwd,
         model: current.model || provider.model,
+        sessionId: current.acpSessionId || undefined,
       })
 
       if (cancelRequestedRef.current) {
@@ -940,6 +1044,7 @@ export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }
     updateTab((prev) => ({
       ...prev,
       providerId: selectedProvider.id,
+      acpSessionId: null,
       messages: seededMessages,
       isGenerating: true,
       hasUnread: false,
@@ -959,6 +1064,7 @@ export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }
         messages: usable,
         cwd,
         model: current.model || selectedProvider.model,
+        sessionId: undefined,
       })
 
       if (cancelRequestedRef.current) {
@@ -1025,7 +1131,9 @@ export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }
     setLoading(false)
 
     updateTab((current) => {
-      const messages = current.messages.map((msg) => {
+      const messages = current.messages
+        .filter((msg) => !(msg.role === 'assistant' && parseThoughtMessage(msg.content) !== null))
+        .map((msg) => {
         if (msg.role === 'assistant') {
           const tool = parseToolMessage(msg.content)
           if (tool && (tool.status === 'in_progress' || tool.status === 'pending')) {
@@ -1033,7 +1141,7 @@ export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }
           }
         }
         return msg
-      })
+        })
 
       return {
         ...current,
@@ -1081,6 +1189,7 @@ export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }
         {tab.messages.map((message, index) => (
           (() => {
             const parsedTool = message.role === 'assistant' ? parseToolMessage(message.content) : null
+            const parsedThought = message.role === 'assistant' ? parseThoughtMessage(message.content) : null
             const toolData = parsedTool ? {
               ...parsedTool,
               status: (!loading && (parsedTool.status === 'in_progress' || parsedTool.status === 'pending')) 
@@ -1113,6 +1222,18 @@ export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }
               )
             }
 
+            if (parsedThought !== null) {
+              return (
+                <div key={index} className="mr-auto w-full max-w-full py-1">
+                  <blockquote className="m-0 border-l-2 border-white/15 bg-white/[0.04] px-3 py-2 text-[13px] italic text-[#8f8f8f]">
+                    <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={markdownComponents}>
+                      {normalizeMarkdownSpacing(parsedThought)}
+                    </ReactMarkdown>
+                  </blockquote>
+                </div>
+              )
+            }
+
             return (
           <div
             key={index}
@@ -1139,7 +1260,11 @@ export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }
                   let hasMoreText = false
                   for (let i = index + 1; i < tab.messages.length; i++) {
                     if (tab.messages[i].role === 'user') break
-                    if (tab.messages[i].role === 'assistant' && !parseToolMessage(tab.messages[i].content)) {
+                    if (
+                      tab.messages[i].role === 'assistant' &&
+                      !parseToolMessage(tab.messages[i].content) &&
+                      !parseThoughtMessage(tab.messages[i].content)
+                    ) {
                       hasMoreText = true
                       break
                     }
