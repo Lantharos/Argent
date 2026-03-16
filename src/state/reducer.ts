@@ -19,6 +19,7 @@ type Action =
       targetTabId: string
       direction: 'left' | 'right' | 'top' | 'bottom'
     }
+  | { type: 'set-split-ratio'; spaceId: string; branchId: string; ratio: number }
   | { type: 'set-secondary-tab'; spaceId: string; tabId: string | null }
   | { type: 'update-tab'; spaceId: string; tabId: string; updater: (tab: AppTab) => AppTab }
   | { type: 'close-tab'; spaceId: string; tabId: string }
@@ -175,6 +176,7 @@ function insertTabAroundTarget(
         id: createId('split-branch'),
         type: 'split',
         orientation,
+        ratio: 0.5,
         first: place === 'before' ? sourceLeaf : node,
         second: place === 'before' ? node : sourceLeaf,
       },
@@ -248,6 +250,47 @@ function splitDirectionToPlacement(direction: 'left' | 'right' | 'top' | 'bottom
     return { orientation: 'horizontal', place: 'before' }
   }
   return { orientation: 'horizontal', place: 'after' }
+}
+
+function updateSplitRatioInNode(node: AppTabSplitNode, branchId: string, ratio: number): { node: AppTabSplitNode; updated: boolean } {
+  if (node.type === 'leaf') {
+    return { node, updated: false }
+  }
+
+  const clampedRatio = Math.max(0.16, Math.min(0.84, ratio))
+  if (node.id === branchId) {
+    return {
+      node: {
+        ...node,
+        ratio: clampedRatio,
+      },
+      updated: true,
+    }
+  }
+
+  const nextFirst = updateSplitRatioInNode(node.first, branchId, clampedRatio)
+  if (nextFirst.updated) {
+    return {
+      node: {
+        ...node,
+        first: nextFirst.node,
+      },
+      updated: true,
+    }
+  }
+
+  const nextSecond = updateSplitRatioInNode(node.second, branchId, clampedRatio)
+  if (nextSecond.updated) {
+    return {
+      node: {
+        ...node,
+        second: nextSecond.node,
+      },
+      updated: true,
+    }
+  }
+
+  return { node, updated: false }
 }
 
 function normalizeSpace(space: AppSpace): AppSpace {
@@ -471,6 +514,7 @@ export function appReducer(state: AppSnapshot, action: Action): AppSnapshot {
             id: createId('split-branch'),
             type: 'split',
             orientation,
+            ratio: 0.5,
             first: place === 'before' ? sourceLeaf : targetLeaf,
             second: place === 'before' ? targetLeaf : sourceLeaf,
           },
@@ -487,6 +531,37 @@ export function appReducer(state: AppSnapshot, action: Action): AppSnapshot {
         tabGroups: normalizedGroups,
         activeTabId: action.sourceTabId,
         tabHistory: recordTabVisit(space.tabHistory, action.sourceTabId),
+      }
+    })
+  }
+
+  if (action.type === 'set-split-ratio') {
+    return updateSpace(state, action.spaceId, (space) => {
+      if (!space.tabGroups?.length) {
+        return space
+      }
+
+      let updated = false
+      const nextGroups = space.tabGroups.map((group) => {
+        const nextRoot = updateSplitRatioInNode(group.root, action.branchId, action.ratio)
+        if (!nextRoot.updated) {
+          return group
+        }
+
+        updated = true
+        return {
+          ...group,
+          root: nextRoot.node,
+        }
+      })
+
+      if (!updated) {
+        return space
+      }
+
+      return {
+        ...space,
+        tabGroups: nextGroups,
       }
     })
   }

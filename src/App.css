@@ -84,7 +84,7 @@
     @apply shrink-0 z-20;
     opacity: 0;
     transition: opacity 140ms ease;
-    background: rgba(146, 171, 210, 0.38);
+    background: rgba(170, 170, 170, 0.34);
   }
 
   .split-node-divider:hover,

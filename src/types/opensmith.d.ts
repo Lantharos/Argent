@@ -100,6 +100,7 @@ export type AppTabSplitBranch = {
   id: string
   type: 'split'
   orientation: SplitOrientation
+  ratio?: number
   first: AppTabSplitNode
   second: AppTabSplitNode
 }

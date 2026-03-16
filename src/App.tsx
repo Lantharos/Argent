@@ -160,6 +160,15 @@ function App() {
     dispatch({ type: 'set-active-space', spaceId })
   }
 
+  function setSplitRatio(spaceId: string, branchId: string, ratio: number) {
+    dispatch({
+      type: 'set-split-ratio',
+      spaceId,
+      branchId,
+      ratio,
+    })
+  }
+
   function selectWorkspaceTab(spaceId: string, tabId: string) {
     dispatch({ type: 'set-active-space', spaceId })
     dispatch({ type: 'set-active-tab', spaceId, tabId })
@@ -237,6 +246,7 @@ function App() {
           onOpenEditorFileInNewTab={openEditorFileInNewTab}
           onSendAI={sendAI}
           onSplitTab={splitTab}
+          onSetSplitRatio={setSplitRatio}
           onSelectWorkspaceTab={selectWorkspaceTab}
         />
       ) : (

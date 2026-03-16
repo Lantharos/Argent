@@ -17,6 +17,7 @@ type Props = {
   onOpenEditorFileInNewTab: (spaceId: string, afterTabId: string, filePath: string, content: string) => void
   onSelectWorkspaceTab: (spaceId: string, tabId: string) => void
   onSplitTab: (spaceId: string, sourceTabId: string, targetTabId: string, direction: 'left' | 'right' | 'top' | 'bottom') => void
+  onSetSplitRatio: (spaceId: string, branchId: string, ratio: number) => void
   onSendAI: (
     providerId: string,
     messages: { role: 'user' | 'assistant'; content: string }[],
@@ -211,6 +212,7 @@ export function Workspace({
   onOpenEditorFileInNewTab,
   onSelectWorkspaceTab,
   onSplitTab,
+  onSetSplitRatio,
   onSendAI,
 }: Props) {
   const [titlebarVisible, setTitlebarVisible] = useState(false)
@@ -221,6 +223,7 @@ export function Workspace({
   const titlebarVisibleRef = useRef(false)
   const tabLastSeenRef = useRef<Record<string, number>>({})
   const splitLayerRef = useRef<HTMLDivElement | null>(null)
+  const splitRatiosRef = useRef<Record<string, number>>({})
   const resizeStateRef = useRef<
     | {
         branchId: string
@@ -485,14 +488,23 @@ export function Workspace({
         if (Math.abs((current[resizeState.branchId] ?? 0.5) - nextRatio) < 0.001) {
           return current
         }
-        return {
+        const next = {
           ...current,
           [resizeState.branchId]: nextRatio,
         }
+        splitRatiosRef.current = next
+        return next
       })
     }
 
     const onMouseUp = () => {
+      const resizeState = resizeStateRef.current
+      if (resizeState) {
+        const ratio = splitRatiosRef.current[resizeState.branchId]
+        if (typeof ratio === 'number') {
+          onSetSplitRatio(space.id, resizeState.branchId, ratio)
+        }
+      }
       resizeStateRef.current = null
     }
 
@@ -502,7 +514,7 @@ export function Workspace({
       window.removeEventListener('mousemove', onMouseMove)
       window.removeEventListener('mouseup', onMouseUp)
     }
-  }, [])
+  }, [onSetSplitRatio, space.id])
 
   if (!currentTab) {
     return null
@@ -513,11 +525,11 @@ export function Workspace({
   const hasSplitLayout = Boolean(activeGroup)
   const isDragSplitting = Boolean(sidebarDragPayload && sidebarDragPayload.spaceId === space.id)
 
-  function getSplitRatio(branchId: string) {
-    return splitRatios[branchId] ?? 0.5
+  function getSplitRatio(branchId: string, fallback: number) {
+    return splitRatios[branchId] ?? fallback
   }
 
-  function startResizeSplit(event: React.MouseEvent<HTMLDivElement>, branchId: string, orientation: 'vertical' | 'horizontal') {
+  function startResizeSplit(event: React.MouseEvent<HTMLDivElement>, branchId: string, orientation: 'vertical' | 'horizontal', currentRatio: number) {
     event.preventDefault()
     event.stopPropagation()
 
@@ -532,7 +544,7 @@ export function Workspace({
       orientation,
       startClientX: event.clientX,
       startClientY: event.clientY,
-      startRatio: getSplitRatio(branchId),
+      startRatio: currentRatio,
       width: Math.max(1, rect.width),
       height: Math.max(1, rect.height),
     }
@@ -767,14 +779,14 @@ export function Workspace({
       return renderLeaf(node.tabId, true)
     }
 
-    const ratio = getSplitRatio(node.id)
+    const ratio = getSplitRatio(node.id, node.ratio ?? 0.5)
 
     return (
       <div className={`split-node ${node.orientation === 'vertical' ? 'split-node-vertical' : 'split-node-horizontal'}`}>
         <div className="split-node-child" style={{ flex: `${ratio} 1 0%` }}>{renderSplitNode(node.first)}</div>
         <div
           className={`split-node-divider ${node.orientation === 'vertical' ? 'split-node-divider-vertical' : 'split-node-divider-horizontal'}`}
-          onMouseDown={(event) => startResizeSplit(event, node.id, node.orientation)}
+          onMouseDown={(event) => startResizeSplit(event, node.id, node.orientation, ratio)}
         />
         <div className="split-node-child" style={{ flex: `${1 - ratio} 1 0%` }}>{renderSplitNode(node.second)}</div>
       </div>

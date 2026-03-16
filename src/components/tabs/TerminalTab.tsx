@@ -214,7 +214,7 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
       return
     }
 
-    const savedHistory = tab.history ?? ''
+    const savedHistory = latestTabRef.current.history ?? ''
     const replayHistory = replayMode === 'new' ? trimTrailingPowerShellPrompt(savedHistory) : savedHistory
     const replayText = sanitizeReplayChunk(normalizeHistoryForReplay(replayHistory))
     if (replayText) {
@@ -292,7 +292,7 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
         attachedSessionIdRef.current = null
       }
     }
-  }, [flushHistory, queueHistory, safeFit, tab.history, tab.sessionId])
+  }, [flushHistory, queueHistory, safeFit, tab.sessionId])
 
   useEffect(() => {
     if (!isActive) {
