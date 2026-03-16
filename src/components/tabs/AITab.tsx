@@ -11,12 +11,13 @@ import {
   SendHorizontal,
   Square,
   TerminalSquare,
+  Trash2,
   Plus,
   Loader2,
 } from 'lucide-react'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
-import type { AITabData, AIStreamEvent, ProviderConfig } from '../../types/opensmith'
+import type { AITabData, AIStreamEvent, PromptAttachment, ProviderConfig } from '../../types/opensmith'
 import { extractModelMeta, ProviderGlyph } from './providerIcon'
 
 type Props = {
@@ -31,6 +32,7 @@ type Props = {
     messages: { role: 'user' | 'assistant'; content: string }[],
     cwd?: string,
     model?: string,
+    attachments?: PromptAttachment[],
   ) => Promise<string>
 }
 
@@ -295,8 +297,63 @@ function displayModeId(modeId: string | null | undefined) {
   return id[0].toUpperCase() + id.slice(1)
 }
 
+function inferMimeTypeFromName(name: string) {
+  const lowered = name.toLowerCase()
+  if (lowered.endsWith('.png')) return 'image/png'
+  if (lowered.endsWith('.jpg') || lowered.endsWith('.jpeg')) return 'image/jpeg'
+  if (lowered.endsWith('.gif')) return 'image/gif'
+  if (lowered.endsWith('.webp')) return 'image/webp'
+  if (lowered.endsWith('.bmp')) return 'image/bmp'
+  if (lowered.endsWith('.svg')) return 'image/svg+xml'
+  if (lowered.endsWith('.pdf')) return 'application/pdf'
+  if (lowered.endsWith('.md')) return 'text/markdown'
+  if (lowered.endsWith('.txt')) return 'text/plain'
+  return 'application/octet-stream'
+}
+
+function filePathToFileUrl(filePath: string) {
+  const normalized = filePath.replace(/\\/g, '/')
+  const prefixed = normalized.startsWith('/') ? normalized : `/${normalized}`
+  return encodeURI(`file://${prefixed}`)
+}
+
+function getAttachmentPreviewSrc(attachment: PromptAttachment) {
+  if (attachment.kind === 'image') {
+    const mimeType = attachment.mimeType || inferMimeTypeFromName(attachment.name)
+    return `data:${mimeType};base64,${attachment.data}`
+  }
+
+  if (attachment.kind === 'file' && attachment.path && (attachment.mimeType || '').startsWith('image/')) {
+    return filePathToFileUrl(attachment.path)
+  }
+
+  return null
+}
+
+function createAttachmentId() {
+  return `att-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function readFileAsBase64(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = typeof reader.result === 'string' ? reader.result : ''
+      const commaIndex = result.indexOf(',')
+      if (commaIndex < 0) {
+        reject(new Error('Invalid image data'))
+        return
+      }
+      resolve(result.slice(commaIndex + 1))
+    }
+    reader.onerror = () => reject(reader.error || new Error('Failed to read file'))
+    reader.readAsDataURL(file)
+  })
+}
+
 export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, providers, onChange, onSend }: Props) {
   const [loading, setLoading] = useState(false)
+  const [isComposerDragging, setIsComposerDragging] = useState(false)
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
   const [activeMetaPopover, setActiveMetaPopover] = useState<'local' | 'access' | 'context' | null>(null)
   const modelMenuRef = useRef<HTMLDivElement | null>(null)
@@ -475,6 +532,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
   }, [tab.messages, tab.input])
 
   const usedTokens = selectedModelUsage?.usedTokens ?? estimatedTokens
+  const composerAttachments = tab.attachments ?? []
   const slashInputState = useMemo(() => {
     const lines = tab.input.split('\n')
     const firstLine = lines[0] ?? ''
@@ -1108,23 +1166,129 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
     })
   }, [updateTab])
 
-  async function addFileContext() {
+  async function addFileAttachment() {
     const picked = await window.opensmith.fs.openFile(null)
     if (!picked) {
       return
     }
-    const content = await window.opensmith.fs.readFile(picked)
+
     const name = picked.split(/[/\\]/).at(-1) ?? picked
-    const block = `\n\n--- FILE: ${name} (${picked}) ---\n${content}\n--- END FILE ---\n`
-    updateTab((current) => ({ ...current, input: `${current.input}${block}` }))
+    const next: PromptAttachment = {
+      id: createAttachmentId(),
+      kind: 'file',
+      name,
+      path: picked,
+      mimeType: inferMimeTypeFromName(name),
+    }
+
+    updateTab((current) => ({
+      ...current,
+      attachments: [...(current.attachments ?? []), next],
+    }))
+  }
+
+  async function buildAttachmentsFromFiles(files: File[]) {
+    const nextAttachments: PromptAttachment[] = []
+
+    for (const file of files) {
+      const filePath = (file as File & { path?: string }).path
+      const name = file.name || (filePath ? filePath.split(/[/\\]/).at(-1) : 'attachment') || 'attachment'
+      const mimeType = file.type || inferMimeTypeFromName(name)
+
+      if (mimeType.startsWith('image/')) {
+        try {
+          const data = await readFileAsBase64(file)
+          nextAttachments.push({
+            id: createAttachmentId(),
+            kind: 'image',
+            name,
+            data,
+            mimeType,
+          })
+        } catch {
+          // no-op
+        }
+        continue
+      }
+
+      if (filePath) {
+        nextAttachments.push({
+          id: createAttachmentId(),
+          kind: 'file',
+          name,
+          path: filePath,
+          mimeType,
+        })
+      }
+    }
+
+    return nextAttachments
+  }
+
+  async function handlePaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const items = Array.from(event.clipboardData?.items ?? [])
+    if (items.length === 0) {
+      return
+    }
+
+    const files = items
+      .filter((item) => item.kind === 'file')
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => Boolean(file))
+
+    if (files.length === 0) {
+      return
+    }
+
+    const canHandle = files.some((file) => {
+      const filePath = (file as File & { path?: string }).path
+      return file.type.startsWith('image/') || Boolean(filePath)
+    })
+
+    if (!canHandle) {
+      return
+    }
+
+    event.preventDefault()
+
+    const nextAttachments = await buildAttachmentsFromFiles(files)
+
+    if (nextAttachments.length === 0) {
+      return
+    }
+
+    updateTab((current) => ({
+      ...current,
+      attachments: [...(current.attachments ?? []), ...nextAttachments],
+    }))
+  }
+
+  async function handleDrop(event: React.DragEvent<HTMLDivElement>) {
+    const dropped = Array.from(event.dataTransfer?.files ?? [])
+    setIsComposerDragging(false)
+    if (dropped.length === 0) {
+      return
+    }
+
+    event.preventDefault()
+    const nextAttachments = await buildAttachmentsFromFiles(dropped)
+    if (nextAttachments.length === 0) {
+      return
+    }
+
+    updateTab((current) => ({
+      ...current,
+      attachments: [...(current.attachments ?? []), ...nextAttachments],
+    }))
   }
 
   async function handleSend() {
     const current = tabRef.current
     const input = current.input.trim()
+    const attachments = current.attachments ?? []
     const provider = selectedProvider
 
-    if (!provider || input.length === 0 || loading) {
+    if (!provider || (input.length === 0 && attachments.length === 0) || loading) {
       return
     }
 
@@ -1144,7 +1308,20 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
     const shouldRetitle = !hasUserMessages && (current.title.trim().length === 0 || current.title === 'AI Chat')
     const nextTitle = shouldRetitle ? summarizeTabTitleFromPrompt(input) : current.title
 
-    const withUser: AITabData['messages'] = [...cleanMessages, { role: 'user', content: input }]
+    const attachmentSummary = attachments.map((item) => item.name).slice(0, 3).join(', ')
+    const fallbackUserText = attachments.length > 0
+      ? `Attached ${attachments.length} item${attachments.length === 1 ? '' : 's'}${attachmentSummary ? `: ${attachmentSummary}` : ''}`
+      : ''
+    const userMessageText = input || fallbackUserText
+
+    const withUser: AITabData['messages'] = [
+      ...cleanMessages,
+      {
+        role: 'user',
+        content: userMessageText,
+        attachments: attachments.length > 0 ? attachments : undefined,
+      },
+    ]
     const compacted = compactConversation(
       withUser.filter(
         (msg): msg is { role: 'user' | 'assistant'; content: string } =>
@@ -1156,6 +1333,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
       ...prev,
       title: nextTitle,
       input: '',
+      attachments: [],
       providerId: provider.id,
       messages: withUser,
       isGenerating: true,
@@ -1180,6 +1358,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
         messages: usable,
         cwd,
         model: current.model || provider.model,
+        attachments,
         modeId: current.acpModeId || undefined,
         sessionId: current.acpSessionId || undefined,
       })
@@ -1214,7 +1393,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
           (msg): msg is { role: 'user' | 'assistant'; content: string } =>
             msg.role === 'user' || msg.role === 'assistant',
         )
-        const content = await onSend(provider.id, usable, cwd, current.model || provider.model)
+        const content = await onSend(provider.id, usable, cwd, current.model || provider.model, attachments)
 
         updateTab((prev) => {
           const messages = [...prev.messages]
@@ -1282,6 +1461,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
     }
 
     const seededMessages = current.messages.slice(0, lastUserIndex + 1)
+    const retryAttachments = seededMessages[lastUserIndex]?.attachments ?? []
     const compacted = compactConversation(
       seededMessages.filter(
         (msg): msg is { role: 'user' | 'assistant'; content: string } =>
@@ -1317,6 +1497,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
         messages: usable,
         cwd,
         model: current.model || selectedProvider.model,
+        attachments: retryAttachments,
         modeId: current.acpModeId || undefined,
         sessionId: undefined,
       })
@@ -1351,7 +1532,13 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
           (msg): msg is { role: 'user' | 'assistant'; content: string } =>
             msg.role === 'user' || msg.role === 'assistant',
         )
-        const content = await onSend(selectedProvider.id, usable, cwd, current.model || selectedProvider.model)
+        const content = await onSend(
+          selectedProvider.id,
+          usable,
+          cwd,
+          current.model || selectedProvider.model,
+          retryAttachments,
+        )
 
         updateTab((prev) => {
           const messages = [...prev.messages]
@@ -1451,6 +1638,14 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
           (() => {
             const parsedTool = message.role === 'assistant' ? parseToolMessage(message.content) : null
             const parsedThought = message.role === 'assistant' ? parseThoughtMessage(message.content) : null
+            const userImageAttachments =
+              message.role === 'user'
+                ? (message.attachments ?? []).filter((attachment) => attachment.kind === 'image')
+                : []
+            const hideAttachmentSummaryText =
+              message.role === 'user' &&
+              userImageAttachments.length > 0 &&
+              /^Attached\s+\d+\s+item/i.test((message.content || '').trim())
             const toolData = parsedTool ? {
               ...parsedTool,
               status: (!loading && (parsedTool.status === 'in_progress' || parsedTool.status === 'pending')) 
@@ -1501,7 +1696,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
             key={index}
             className={
               message.role === 'user'
-                ? 'py-1 border-none ml-auto bg-white/12 shadow-sm ring-1 ring-white/10 rounded-2xl px-4 py-2.5 text-white max-w-[75%] whitespace-pre-wrap'
+                ? 'ml-auto flex max-w-[75%] flex-col items-end gap-2 py-1'
                 : 'group py-1 px-0 border-none mr-auto bg-transparent text-[#b6b6b6] w-full max-w-full'
             }
           >
@@ -1570,7 +1765,30 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
                 })()}
               </div>
             ) : (
-              message.content
+              <>
+                {userImageAttachments.length > 0 ? (
+                  <div className="flex flex-wrap justify-end gap-2">
+                    {userImageAttachments.map((attachment) => {
+                      const previewSrc = getAttachmentPreviewSrc(attachment)
+                      if (!previewSrc) {
+                        return null
+                      }
+
+                      return (
+                        <div key={attachment.id} className="h-24 w-24 overflow-hidden rounded-2xl border border-white/10 bg-[#1d1d1d]">
+                          <img src={previewSrc} alt={attachment.name} className="h-full w-full object-cover" />
+                        </div>
+                      )
+                    })}
+                  </div>
+                ) : null}
+
+                {!hideAttachmentSummaryText ? (
+                  <div className="border-none bg-white/12 shadow-sm ring-1 ring-white/10 rounded-2xl px-4 py-2.5 text-white whitespace-pre-wrap">
+                    {message.content}
+                  </div>
+                ) : null}
+              </>
             )}
           </div>
             )
@@ -1592,14 +1810,90 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
         }}
       >
         <div
-          className="flex flex-col w-full rounded-3xl border border-white/20 hover:border-white/30 focus-within:border-white/40 transition px-1 bg-[#131313]/74 backdrop-blur-xl backdrop-saturate-150 text-[#e5e5e5] shadow-[0_20px_55px_rgba(0,0,0,0.5)]"
+          className={`flex flex-col w-full rounded-3xl border transition px-1 bg-[#131313]/74 backdrop-blur-xl backdrop-saturate-150 text-[#e5e5e5] shadow-[0_20px_55px_rgba(0,0,0,0.5)] ${isComposerDragging ? 'border-[#9ac1ff] bg-[#1a1a1a]/90' : 'border-white/20 hover:border-white/30 focus-within:border-white/40'}`}
           dir="auto"
+          onDragOver={(event) => {
+            if (!Array.from(event.dataTransfer?.types ?? []).includes('Files')) {
+              return
+            }
+            event.preventDefault()
+            if (!isComposerDragging) {
+              setIsComposerDragging(true)
+            }
+          }}
+          onDragLeave={(event) => {
+            const related = event.relatedTarget
+            if (related instanceof Node && event.currentTarget.contains(related)) {
+              return
+            }
+            if (isComposerDragging) {
+              setIsComposerDragging(false)
+            }
+          }}
+          onDrop={(event) => {
+            void handleDrop(event)
+          }}
         >
           <div className="px-2.5">
+            {isComposerDragging ? (
+              <div className="px-1 pt-2 text-[11px] text-[#9ac1ff]">Drop files or images to attach</div>
+            ) : null}
+
+            {composerAttachments.length > 0 ? (
+              <div className="flex flex-wrap items-center gap-2 px-1 pt-2 pb-1.5">
+                {composerAttachments.map((attachment) => {
+                  const label = attachment.kind === 'image' ? `Image: ${attachment.name}` : attachment.name
+                  const previewSrc = getAttachmentPreviewSrc(attachment)
+                  const removeAttachment = () => {
+                    updateTab((current) => ({
+                      ...current,
+                      attachments: (current.attachments ?? []).filter((item) => item.id !== attachment.id),
+                    }))
+                  }
+
+                  if (previewSrc) {
+                    return (
+                      <div key={attachment.id} className="relative h-20 w-20 overflow-hidden rounded-2xl border border-[#3a3a3a] bg-[#1a1a1a]">
+                        <img src={previewSrc} alt={attachment.name} className="h-full w-full object-cover" />
+                        <button
+                          type="button"
+                          className="absolute right-1.5 top-1.5 grid h-6 w-6 place-items-center rounded-full bg-black/65 text-[#f0f0f0] transition hover:bg-black/80"
+                          onClick={removeAttachment}
+                          aria-label={`Remove ${attachment.name}`}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    )
+                  }
+
+                  return (
+                    <div key={attachment.id} className="inline-flex max-w-full items-center gap-1.5 rounded-2xl border border-[#3a3a3a] bg-[#1a1a1a] px-1.5 py-1 text-[11px] text-[#d0d0d0]">
+                      <div className="grid h-8 w-8 place-items-center rounded-lg bg-[#222222]">
+                        <FileText className="h-3.5 w-3.5 shrink-0 text-[#9a9a9a]" />
+                      </div>
+                      <span className="truncate max-w-[180px]">{label}</span>
+                      <button
+                        type="button"
+                        className="rounded-full px-1 text-[#9a9a9a] hover:bg-white/10 hover:text-[#e0e0e0]"
+                        onClick={removeAttachment}
+                        aria-label={`Remove ${attachment.name}`}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : null}
+
             <textarea
               className="w-full bg-transparent outline-none border-0 resize-none text-[15px] text-[#ebebeb] placeholder:text-[#7f7f7f] pt-2.5 pb-[6px] px-1 min-h-[72px] max-h-72 overflow-auto"
               value={tab.input}
               onChange={(event) => updateTab((current) => ({ ...current, input: event.target.value }))}
+              onPaste={(event) => {
+                void handlePaste(event)
+              }}
               onKeyDown={(event) => {
                 if (slashCommandMenuOpen && slashCommandSuggestions.length > 0) {
                   if (event.key === 'ArrowDown') {
@@ -1629,7 +1923,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
                 }
 
                 event.preventDefault()
-                if (!loading && opencodeInstalled && tab.input.trim().length > 0) {
+                if (!loading && opencodeInstalled && (tab.input.trim().length > 0 || (tab.attachments?.length ?? 0) > 0)) {
                   void handleSend()
                 }
               }}
@@ -1741,7 +2035,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
                   ) : null}
                 </div>
 
-                <button type="button" className="bg-transparent hover:bg-white/8 text-[#b8b8b8] transition rounded-full p-1.5 outline-none" onClick={addFileContext} aria-label="Add file">
+                <button type="button" className="bg-transparent hover:bg-white/8 text-[#b8b8b8] transition rounded-full p-1.5 outline-none" onClick={addFileAttachment} aria-label="Add file">
                     <Plus className="h-4 w-4" />
                 </button>
 
@@ -1836,9 +2130,6 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
               {(() => {
                 const limit = resolvedContextWindow ?? 0
                 const validLimit = limit > 0
-                if (!validLimit) {
-                  return null
-                }
                 const percentage = Math.min(100, Math.max(0, (usedTokens / limit) * 100))
                 const circumference = 2 * Math.PI * 6 // r=6
                 const strokeDashoffset = circumference - (percentage / 100) * circumference
@@ -1855,9 +2146,17 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
                         <circle cx="7" cy="7" r="6" strokeWidth="2" fill="none" className="stroke-[#3a3a3a]" />
                         <circle 
                           cx="7" cy="7" r="6" strokeWidth="2" fill="none" 
-                          className={percentage > 90 ? 'stroke-[#ef4444]' : percentage > 75 ? 'stroke-[#eab308]' : 'stroke-[#b5b5b5]'} 
+                          className={
+                            !validLimit
+                              ? 'stroke-[#6b6b6b]'
+                              : percentage > 90
+                                ? 'stroke-[#ef4444]'
+                                : percentage > 75
+                                  ? 'stroke-[#eab308]'
+                                  : 'stroke-[#b5b5b5]'
+                          }
                           strokeDasharray={circumference} 
-                          strokeDashoffset={strokeDashoffset} 
+                          strokeDashoffset={validLimit ? strokeDashoffset : circumference}
                           strokeLinecap="round" 
                         />
                       </svg>
@@ -1865,14 +2164,18 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
                     {activeMetaPopover === 'context' ? (
                       <div className="absolute right-0 bottom-[calc(100%+8px)] w-[250px] rounded-xl border border-[#353535] bg-[#161616] px-3.5 py-3 text-[12px] leading-relaxed shadow-[0_14px_30px_rgba(0,0,0,0.45)] z-40 text-left" role="status">
                         <div className="font-medium text-[#c0c0c0] mb-0.5">Context window</div>
-                        <>
-                          <div className="font-medium text-[#e0e0e0] text-[13px] mb-1">
-                            {percentage.toFixed(1)}% used <span className="text-[#888] font-normal">({(100 - percentage).toFixed(1)}% left)</span>
-                          </div>
-                          <div className="text-[#888]">
-                            {(usedTokens / 1000).toFixed(1)}k / {(limit / 1000).toFixed(1)}k tokens used
-                          </div>
-                        </>
+                        {validLimit ? (
+                          <>
+                            <div className="font-medium text-[#e0e0e0] text-[13px] mb-1">
+                              {percentage.toFixed(1)}% used <span className="text-[#888] font-normal">({(100 - percentage).toFixed(1)}% left)</span>
+                            </div>
+                            <div className="text-[#888]">
+                              {(usedTokens / 1000).toFixed(1)}k / {(limit / 1000).toFixed(1)}k tokens used
+                            </div>
+                          </>
+                        ) : (
+                          <div className="text-[#888]">Token limit is unavailable for the current model.</div>
+                        )}
                       </div>
                     ) : null}
                   </div>
@@ -1894,7 +2197,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
                 <button
                   className="bg-[#b0b0b0] text-[#151515] hover:bg-[#c8c8c8] transition rounded-full size-9 flex items-center justify-center text-base font-semibold disabled:opacity-45 disabled:hover:bg-[#b0b0b0]"
                   type="submit"
-                  disabled={!opencodeInstalled || tab.input.trim().length === 0}
+                  disabled={!opencodeInstalled || (tab.input.trim().length === 0 && (tab.attachments?.length ?? 0) === 0)}
                 >
                   <SendHorizontal className="h-4 w-4" />
                 </button>

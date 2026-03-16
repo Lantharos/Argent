@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import type { AppSpace, AppTab, AppTabGroup, AppTabSplitNode, ProviderConfig } from '../../types/opensmith'
+import type { AppSpace, AppTab, AppTabGroup, AppTabSplitNode, PromptAttachment, ProviderConfig } from '../../types/opensmith'
 import { TabRenderer } from '../../tabs/TabRenderer'
 
 const HOT_TAB_LIMIT = 6
@@ -23,6 +23,7 @@ type Props = {
     messages: { role: 'user' | 'assistant'; content: string }[],
     cwd?: string,
     model?: string,
+    attachments?: PromptAttachment[],
   ) => Promise<string>
 }
 
@@ -187,6 +188,7 @@ function RenderPanel({
     messages: { role: 'user' | 'assistant'; content: string }[],
     cwd?: string,
     model?: string,
+    attachments?: PromptAttachment[],
   ) => Promise<string>
 }) {
   return (

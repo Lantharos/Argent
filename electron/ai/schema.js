@@ -16,9 +16,27 @@ export const messageSchema = z.object({
   content: z.string().min(1),
 })
 
+export const attachmentSchema = z.discriminatedUnion('kind', [
+  z.object({
+    id: z.string().min(1),
+    kind: z.literal('file'),
+    name: z.string().min(1),
+    path: z.string().min(1),
+    mimeType: z.string().min(1).optional(),
+  }),
+  z.object({
+    id: z.string().min(1),
+    kind: z.literal('image'),
+    name: z.string().min(1),
+    data: z.string().min(1),
+    mimeType: z.string().min(1).optional(),
+  }),
+])
+
 export const chatRequestSchema = z.object({
   providerId: z.string().min(1),
   messages: z.array(messageSchema).min(1),
+  attachments: z.array(attachmentSchema).max(24).optional(),
   model: z.string().min(1).optional(),
   modeId: z.string().min(1).optional(),
   temperature: z.number().min(0).max(2).optional(),

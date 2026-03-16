@@ -2,6 +2,7 @@ import { chatRequestSchema } from './schema.js'
 import { getProviderSecret, listProviders } from '../store/providersStore.js'
 import fs from 'node:fs'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { exec, spawn, spawnSync } from 'node:child_process'
 import { promisify } from 'node:util'
 import readline from 'node:readline'
@@ -288,6 +289,145 @@ function parseSlashCommand(text) {
     name: normalized.toLowerCase(),
     args: rest.join(' ').trim(),
   }
+}
+
+function buildAcpPromptParts(promptText, attachments, capabilities) {
+  const parts = [{ type: 'text', text: promptText }]
+  if (!Array.isArray(attachments) || attachments.length === 0) {
+    return parts
+  }
+
+  for (const attachment of attachments) {
+    if (!attachment || typeof attachment !== 'object') {
+      continue
+    }
+
+    if (attachment.kind === 'file' && typeof attachment.path === 'string' && attachment.path.trim().length > 0) {
+      const filePath = path.resolve(attachment.path)
+      const uri = pathToFileURL(filePath).href
+      parts.push({
+        type: 'resource_link',
+        uri,
+        name: typeof attachment.name === 'string' ? attachment.name : path.basename(filePath),
+        ...(typeof attachment.mimeType === 'string' && attachment.mimeType.trim().length > 0
+          ? { mimeType: attachment.mimeType }
+          : {}),
+      })
+      continue
+    }
+
+    if (attachment.kind === 'image' && typeof attachment.data === 'string' && attachment.data.length > 0) {
+      const mimeType =
+        typeof attachment.mimeType === 'string' && attachment.mimeType.trim().length > 0
+          ? attachment.mimeType
+          : 'image/png'
+
+      const label = typeof attachment.name === 'string' && attachment.name.trim().length > 0 ? attachment.name : 'image.png'
+      const safeLabel = label.replace(/[^a-zA-Z0-9._-]/g, '_')
+
+      parts.push({
+        type: 'image',
+        uri: `file:///${safeLabel}`,
+        mimeType,
+        data: attachment.data,
+      })
+
+      parts.push({
+        type: 'resource',
+        resource: {
+          uri: `file:///${safeLabel}`,
+          mimeType,
+          blob: attachment.data,
+        },
+      })
+    }
+  }
+
+  return parts
+}
+
+function resolveAcpSessionModelId(requestedModelId, availableModels, currentModelId) {
+  if (typeof requestedModelId !== 'string' || requestedModelId.trim().length === 0) {
+    return currentModelId || null
+  }
+
+  const normalizedRequested = requestedModelId.trim()
+  const modelIds = Array.isArray(availableModels)
+    ? availableModels
+        .map((item) => (typeof item?.modelId === 'string' ? item.modelId : null))
+        .filter((item) => typeof item === 'string')
+    : []
+
+  if (modelIds.length === 0) {
+    return normalizedRequested
+  }
+
+  if (modelIds.includes(normalizedRequested)) {
+    return normalizedRequested
+  }
+
+  if (!normalizedRequested.includes('/')) {
+    const suffix = `/${normalizedRequested}`
+    const matched = modelIds.find((id) => id.endsWith(suffix))
+    if (matched) {
+      return matched
+    }
+  }
+
+  return null
+}
+
+function extractTextFromPromptResult(result) {
+  if (!result || typeof result !== 'object') {
+    return ''
+  }
+
+  const candidates = []
+  const seen = new Set()
+
+  const visit = (value, keyHint = '') => {
+    if (value == null) {
+      return
+    }
+
+    if (typeof value === 'string') {
+      const trimmed = value.trim()
+      if (!trimmed) {
+        return
+      }
+
+      const likelyTextKey = /text|content|message|reply|output/i.test(keyHint)
+      if (likelyTextKey || trimmed.length > 40) {
+        if (!seen.has(trimmed)) {
+          seen.add(trimmed)
+          candidates.push(trimmed)
+        }
+      }
+      return
+    }
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        visit(item, keyHint)
+      }
+      return
+    }
+
+    if (typeof value === 'object') {
+      for (const [key, nested] of Object.entries(value)) {
+        visit(nested, key)
+      }
+    }
+  }
+
+  visit(result._meta ?? null, '_meta')
+  visit(result, 'result')
+
+  const best = candidates
+    .filter((item) => item.length > 0)
+    .sort((a, b) => b.length - a.length)[0]
+
+  return typeof best === 'string' ? best : ''
 }
 
 function isCopilotRuntimeExitError(error) {
@@ -1048,6 +1188,35 @@ async function requestViaOpenCodeAcp(parsed, provider, emitEvent = () => {}, opt
       activeSessionId = sessionId
       runtime.lastSessionId = sessionId
       runtime.knownSessions.add(sessionId)
+      const currentSessionModelId =
+        typeof sessionResult?.models?.currentModelId === 'string' ? sessionResult.models.currentModelId : null
+      const availableSessionModels = Array.isArray(sessionResult?.models?.availableModels)
+        ? sessionResult.models.availableModels
+        : []
+      const requestedSessionModelId = resolveAcpSessionModelId(
+        parsed.model,
+        availableSessionModels,
+        currentSessionModelId,
+      )
+      let appliedSessionModelId = currentSessionModelId
+
+      if (
+        requestedSessionModelId &&
+        requestedSessionModelId.trim().length > 0 &&
+        (requestedSessionModelId !== currentSessionModelId || currentSessionModelId == null)
+      ) {
+        try {
+          await rpc.request('session/set_model', {
+            sessionId,
+            modelId: requestedSessionModelId,
+          })
+          appliedSessionModelId = requestedSessionModelId
+        } catch (error) {
+          throw new Error(
+            `Failed to apply requested model ${requestedSessionModelId} for this session: ${error instanceof Error ? error.message : String(error)}`,
+          )
+        }
+      }
 
       const availableModes = normalizeAvailableModes(sessionResult?.modes?.availableModes)
       if (availableModes.length > 0) {
@@ -1082,7 +1251,8 @@ async function requestViaOpenCodeAcp(parsed, provider, emitEvent = () => {}, opt
         .reverse()
         .find((message) => message.role === 'user' && message.content.trim().length > 0)
       const userCommand = parseSlashCommand(lastUser?.content)
-      const promptText = resumedSession && lastUser ? lastUser.content : toTranscript(parsed.messages)
+      const promptText = toTranscript(parsed.messages)
+      const promptParts = buildAcpPromptParts(promptText, parsed.attachments, runtime.capabilities)
 
       if (userCommand?.name === 'compact') {
         emitEvent({
@@ -1099,7 +1269,7 @@ async function requestViaOpenCodeAcp(parsed, provider, emitEvent = () => {}, opt
       try {
         promptResult = await rpc.request('session/prompt', {
           sessionId,
-          prompt: [{ type: 'text', text: promptText }],
+          prompt: promptParts,
         })
       } catch (error) {
         if (userCommand?.name === 'compact') {
@@ -1132,12 +1302,90 @@ async function requestViaOpenCodeAcp(parsed, provider, emitEvent = () => {}, opt
         runtime.sessionUsageById.set(sessionId, promptUsage)
       }
 
+      if (!assistantText.trim() && !userCommand && !aborted) {
+        const waitUntil = Date.now() + 1800
+        while (!assistantText.trim() && Date.now() < waitUntil && !aborted) {
+          await new Promise((resolve) => setTimeout(resolve, 30))
+        }
+      }
+
       const content = assistantText.trim()
       if (!content && !userCommand) {
         if (aborted) {
           throw new Error('Generation cancelled')
         }
-        throw new Error('OpenCode ACP returned no assistant text')
+
+        const fromPromptResult = extractTextFromPromptResult(promptResult).trim()
+        if (fromPromptResult) {
+          return {
+            id: sessionId,
+            content: fromPromptResult,
+            model: parsed.model || provider.model,
+            usage: latestUsage ?? promptResult?.usage ?? null,
+          }
+        }
+
+        // Fallback: some ACP/runtime combos complete the prompt but only surface
+        // text through session replay. Try to recover by loading and capturing
+        // assistant chunks for this session.
+        let replayAssistantText = ''
+        const stopReplayCapture = rpc.onNotification((msg) => {
+          if (msg.method !== 'session/update') {
+            return
+          }
+
+          if (msg?.params?.sessionId !== sessionId) {
+            return
+          }
+
+          const update = msg?.params?.update
+          if (update?.sessionUpdate !== 'agent_message_chunk') {
+            return
+          }
+
+          const text = update?.content?.text
+          if (typeof text === 'string' && text.length > 0) {
+            replayAssistantText += text
+          }
+        })
+
+        try {
+          await rpc.request('session/load', {
+            sessionId,
+            cwd: workingDirectory,
+            mcpServers: [],
+          })
+
+          const waitUntilReplay = Date.now() + 1200
+          while (!replayAssistantText.trim() && Date.now() < waitUntilReplay && !aborted) {
+            await new Promise((resolve) => setTimeout(resolve, 30))
+          }
+        } catch (error) {
+          // no-op
+        } finally {
+          stopReplayCapture()
+        }
+
+        const recovered = replayAssistantText.trim()
+        if (recovered) {
+          return {
+            id: sessionId,
+            content: recovered,
+            model: parsed.model || provider.model,
+            usage: latestUsage ?? promptResult?.usage ?? null,
+          }
+        }
+
+        const selectedModel = (parsed.model || currentSessionModelId || provider.model || 'unknown').toString()
+        if (selectedModel.toLowerCase() === 'openai/gpt-5.4') {
+          throw new Error(
+            'OpenCode ACP returned no assistant text for openai/gpt-5.4. This model is often unsupported with Codex/ChatGPT account auth in OpenCode. Switch to openai/gpt-5.1-codex or change provider auth.',
+          )
+        }
+
+        throw new Error(
+          `OpenCode ACP completed the turn but returned no assistant text (model: ${selectedModel}). Please switch model or retry.`,
+        )
       }
 
       return {
@@ -1363,7 +1611,7 @@ async function listOpenCodeAcpCommands(cwd, sessionId) {
         return runtime.availableCommands
       }
 
-      const preferredSessionId = sessionId || runtime.lastSessionId
+      const preferredSessionId = sessionId || null
       if (preferredSessionId) {
         const cached = runtime.availableCommandsBySessionId.get(preferredSessionId)
         if (cached && cached.length > 0) {
@@ -1449,7 +1697,7 @@ async function listOpenCodeAcpModes(cwd, sessionId) {
         }
       }
 
-      const preferredSessionId = sessionId || runtime.lastSessionId
+      const preferredSessionId = sessionId || null
       if (preferredSessionId) {
         const cachedModes = runtime.availableModesBySessionId.get(preferredSessionId)
         const cachedCurrent = runtime.sessionModeById.get(preferredSessionId) || null
@@ -1517,7 +1765,7 @@ async function setOpenCodeAcpMode(cwd, sessionId, modeId) {
 
   return withOpenCodeRuntime(workingDirectory, async (runtime) => {
     const rpc = runtime.rpc
-    let activeSessionId = sessionId || runtime.lastSessionId || null
+    let activeSessionId = sessionId || null
 
     if (activeSessionId) {
       const canResume = Boolean(runtime?.capabilities?.sessionCapabilities?.resume)

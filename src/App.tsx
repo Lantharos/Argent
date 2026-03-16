@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useReducer, useState } from 'react'
 import { Loader2 } from 'lucide-react'
-import type { AppSnapshot, AppTab, AppTabType, ProviderConfig } from './types/opensmith'
+import type { AppSnapshot, AppTab, AppTabType, PromptAttachment, ProviderConfig } from './types/opensmith'
 import { appReducer } from './state/reducer'
 import { defaultSnapshot, createGlobalSpace, createSpace } from './state/snapshot'
 import { getActiveSpace, getTab } from './state/selectors'
@@ -144,8 +144,9 @@ function App() {
     messages: { role: 'user' | 'assistant'; content: string }[],
     cwd?: string,
     model?: string,
+    attachments?: PromptAttachment[],
   ) {
-    const reply = await window.opensmith.ai.sendMessage({ providerId, messages, cwd, model })
+    const reply = await window.opensmith.ai.sendMessage({ providerId, messages, cwd, model, attachments })
     return reply.content
   }
 

@@ -15,7 +15,24 @@ export type ProviderConfig = {
 export type ChatMessage = {
   role: 'system' | 'developer' | 'user' | 'assistant'
   content: string
+  attachments?: PromptAttachment[]
 }
+
+export type PromptAttachment =
+  | {
+      id: string
+      kind: 'file'
+      name: string
+      path: string
+      mimeType?: string
+    }
+  | {
+      id: string
+      kind: 'image'
+      name: string
+      data: string
+      mimeType?: string
+    }
 
 export type AIReply = {
   id: string | null
@@ -58,6 +75,7 @@ export type AITabData = AppTabBase & {
   model: string | null
   acpModeId?: string | null
   acpSessionId?: string | null
+  attachments?: PromptAttachment[]
   usageByModel?: Record<string, { usedTokens: number | null; maxTokens: number | null }>
   messages: ChatMessage[]
   input: string
@@ -161,6 +179,7 @@ declare global {
         sendMessage: (payload: {
           providerId: string
           messages: ChatMessage[]
+          attachments?: PromptAttachment[]
           model?: string
           modeId?: string
           temperature?: number
@@ -170,6 +189,7 @@ declare global {
         streamStart: (payload: {
           providerId: string
           messages: ChatMessage[]
+          attachments?: PromptAttachment[]
           model?: string
           modeId?: string
           temperature?: number

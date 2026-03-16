@@ -1,4 +1,4 @@
-import type { AppTab, ProviderConfig } from '../types/opensmith'
+import type { AppTab, PromptAttachment, ProviderConfig } from '../types/opensmith'
 import { AITab } from '../components/tabs/AITab'
 import { BrowserTab } from '../components/tabs/BrowserTab'
 import { TerminalTab } from '../components/tabs/TerminalTab'
@@ -19,6 +19,7 @@ type Props = {
     messages: { role: 'user' | 'assistant'; content: string }[],
     cwd?: string,
     model?: string,
+    attachments?: PromptAttachment[],
   ) => Promise<string>
 }
 
