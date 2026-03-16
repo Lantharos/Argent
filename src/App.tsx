@@ -5,6 +5,7 @@ import { appReducer } from './state/reducer'
 import { defaultSnapshot, createGlobalSpace, createSpace } from './state/snapshot'
 import { getActiveSpace, getTab } from './state/selectors'
 import { createTab } from './state/tabFactory'
+import { CommandPalette } from './components/layout/CommandPalette'
 import { EmptyState } from './components/layout/EmptyState'
 import { SpaceSidebar } from './components/layout/SpaceSidebar'
 import { Workspace } from './components/layout/Workspace'
@@ -107,6 +108,44 @@ function App() {
       tabId: tab.id,
       updater: () => tab,
     })
+  }
+
+  function createTabFromPalette(spaceId: string, tabType: AppTabType, patch?: Partial<AppTab>) {
+    const space = state.spaces.find((item) => item.id === spaceId)
+    if (!space) {
+      return
+    }
+
+    const activeAiTab = space.tabs.find(
+      (tab): tab is Extract<AppTab, { type: 'ai' }> => tab.id === space.activeTabId && tab.type === 'ai',
+    )
+    const latestAiTab = state.spaces
+      .flatMap((entry) => entry.tabs)
+      .reverse()
+      .find((tab): tab is Extract<AppTab, { type: 'ai' }> => tab.type === 'ai')
+
+    const baseTab = createTab(tabType, space.rootPath)
+    const nextTab =
+      baseTab.type === 'ai'
+        ? {
+            ...baseTab,
+            providerId: activeAiTab?.providerId ?? latestAiTab?.providerId ?? 'opencode-acp',
+            model: activeAiTab?.model ?? latestAiTab?.model ?? null,
+          }
+        : baseTab
+
+    const afterTabId = space.activeTabId || space.tabs.at(-1)?.id || nextTab.id
+    dispatch({
+      type: 'insert-tab-after',
+      spaceId,
+      afterTabId,
+      tab: {
+        ...nextTab,
+        ...patch,
+      } as AppTab,
+      activate: true,
+    })
+    dispatch({ type: 'set-active-space', spaceId })
   }
 
   function openEditorFileInNewTab(spaceId: string, afterTabId: string, filePath: string, content: string) {
@@ -255,6 +294,15 @@ function App() {
           <EmptyState onCreateSpace={addSpaceFromFolder} />
         </div>
       )}
+
+      <CommandPalette
+        spaces={state.spaces}
+        activeSpaceId={state.activeSpaceId}
+        onCreateTab={createTabFromPalette}
+        onSelectTab={selectWorkspaceTab}
+        onAddSpaceFromFolder={addSpaceFromFolder}
+        onAddEmptySpace={addEmptySpace}
+      />
     </main>
   )
 }
