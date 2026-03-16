@@ -4,6 +4,8 @@ import { createTab } from './tabFactory'
 type Action =
   | { type: 'replace'; value: AppSnapshot }
   | { type: 'add-space'; space: AppSpace }
+  | { type: 'rename-space'; spaceId: string; name: string }
+  | { type: 'delete-space'; spaceId: string }
   | { type: 'set-active-space'; spaceId: string }
   | { type: 'add-tab'; spaceId: string; tabType: AppTabType }
   | { type: 'insert-tab-after'; spaceId: string; afterTabId: string; tab: AppTab; activate?: boolean }
@@ -31,11 +33,19 @@ function removeFromHistory(history: string[] | undefined, tabId: string): string
 }
 
 function normalizeSpace(space: AppSpace): AppSpace {
-  const tabIds = new Set(space.tabs.map((tab) => tab.id))
+  const normalizedKind = space.kind ?? 'project'
+  const normalizedTabs =
+    normalizedKind === 'global'
+      ? space.tabs.filter((tab) => tab.type !== 'git' && tab.type !== 'editor')
+      : space.tabs
+
+  const tabIds = new Set(normalizedTabs.map((tab) => tab.id))
   const historyFromState = (space.tabHistory ?? []).filter((id) => tabIds.has(id))
-  const activeFallback = tabIds.has(space.activeTabId) ? space.activeTabId : space.tabs.at(0)?.id ?? ''
+  const activeFallback = tabIds.has(space.activeTabId) ? space.activeTabId : normalizedTabs.at(0)?.id ?? ''
   return {
     ...space,
+    kind: normalizedKind,
+    tabs: normalizedTabs,
     activeTabId: activeFallback,
     tabHistory: activeFallback ? recordTabVisit(historyFromState, activeFallback) : historyFromState,
   }
@@ -89,6 +99,35 @@ export function appReducer(state: AppSnapshot, action: Action): AppSnapshot {
     }
   }
 
+  if (action.type === 'rename-space') {
+    return updateSpace(state, action.spaceId, (space) => ({
+      ...space,
+      name: action.name,
+    }))
+  }
+
+  if (action.type === 'delete-space') {
+    const nextSpaces = state.spaces.filter((space) => space.id !== action.spaceId)
+    if (nextSpaces.length === 0) {
+      return {
+        ...state,
+        spaces: [],
+        activeSpaceId: null,
+      }
+    }
+
+    const nextActiveId =
+      state.activeSpaceId && state.activeSpaceId !== action.spaceId && nextSpaces.some((space) => space.id === state.activeSpaceId)
+        ? state.activeSpaceId
+        : nextSpaces[0].id
+
+    return {
+      ...state,
+      spaces: nextSpaces,
+      activeSpaceId: nextActiveId,
+    }
+  }
+
   if (action.type === 'set-active-space') {
     return {
       ...state,
@@ -98,6 +137,10 @@ export function appReducer(state: AppSnapshot, action: Action): AppSnapshot {
 
   if (action.type === 'add-tab') {
     return updateSpace(state, action.spaceId, (space) => {
+      if ((space.kind ?? 'project') === 'global' && (action.tabType === 'git' || action.tabType === 'editor')) {
+        return space
+      }
+
       const tab = createTab(action.tabType, space.rootPath)
       const aiDefaults = findLastUsedAiSettings(state, action.spaceId)
       const nextTab =

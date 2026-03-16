@@ -22,6 +22,7 @@ import type { AITabData, AIStreamEvent, ProviderConfig } from '../../types/opens
 type Props = {
   tab: AITabData
   isActive?: boolean
+  spaceKind?: 'project' | 'global'
   cwd: string
   providers: ProviderConfig[]
   onChange: (next: AITabData) => void
@@ -271,7 +272,7 @@ function summarizeTabTitleFromPrompt(input: string) {
   return base || 'AI Chat'
 }
 
-export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }: Props) {
+export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, providers, onChange, onSend }: Props) {
   const [loading, setLoading] = useState(false)
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
   const [activeMetaPopover, setActiveMetaPopover] = useState<'local' | 'access' | 'context' | null>(null)
@@ -1181,8 +1182,14 @@ export function AITab({ tab, isActive = true, cwd, providers, onChange, onSend }
 
         {tab.messages.length === 0 ? (
           <div className="w-full max-w-[760px] mx-auto mt-10 md:mt-16 px-2 text-center">
-            <h2 className="m-0 text-[30px] leading-tight font-semibold tracking-tight text-[#efefef]">What do you want to build?</h2>
-            <p className="mt-3 mb-0 text-[14px] text-[#9a9a9a]">Describe an app, feature, bug fix, or refactor and I can plan and execute it.</p>
+            <h2 className="m-0 text-[30px] leading-tight font-semibold tracking-tight text-[#efefef]">
+              {spaceKind === 'global' ? 'What do you want to do?' : 'What do you want to build?'}
+            </h2>
+            <p className="mt-3 mb-0 text-[14px] text-[#9a9a9a]">
+              {spaceKind === 'global'
+                ? 'I can help across your PC: write code, run terminal tasks, inspect files, troubleshoot issues, or just chat through ideas.'
+                : 'Describe an app, feature, bug fix, or refactor and I can plan and execute it.'}
+            </p>
           </div>
         ) : null}
 

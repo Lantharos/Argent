@@ -9,6 +9,7 @@ type Props = {
   tab: AppTab
   isActive?: boolean
   spaceId: string
+  spaceKind: 'project' | 'global'
   cwd: string
   providers: ProviderConfig[]
   updateTab: (next: AppTab) => void
@@ -21,12 +22,13 @@ type Props = {
   ) => Promise<string>
 }
 
-export function TabRenderer({ tab, isActive = true, spaceId, cwd, providers, updateTab, openEditorFileInNewTab, sendAI }: Props) {
+export function TabRenderer({ tab, isActive = true, spaceId, spaceKind, cwd, providers, updateTab, openEditorFileInNewTab, sendAI }: Props) {
   if (tab.type === 'ai') {
     return (
       <AITab
         tab={tab}
         isActive={isActive}
+        spaceKind={spaceKind}
         cwd={cwd}
         providers={providers}
         onChange={(next) => updateTab(next)}

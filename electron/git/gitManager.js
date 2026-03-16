@@ -24,4 +24,22 @@ export function setupGitHandlers() {
       return { success: false, error: e.message, stdout: e.stdout, stderr: e.stderr };
     }
   });
+
+  ipcMain.handle('git:clone', async (_, { repoUrl, parentDir }) => {
+    try {
+      const { stdout, stderr } = await execFileAsync('git', ['clone', repoUrl], {
+        cwd: parentDir,
+        maxBuffer: 1024 * 1024 * 10,
+      });
+
+      const output = `${stdout || ''}\n${stderr || ''}`;
+      const match = /Cloning into ['"](.+?)['"]/i.exec(output);
+      const folderName = match?.[1] || path.basename(repoUrl.replace(/\.git$/i, '').replace(/[\\/]$/, ''));
+      const clonedPath = path.join(parentDir, folderName);
+
+      return { success: true, path: clonedPath, stdout, stderr };
+    } catch (e) {
+      return { success: false, error: e.message, stdout: e.stdout, stderr: e.stderr };
+    }
+  });
 }

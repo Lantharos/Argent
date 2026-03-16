@@ -92,6 +92,7 @@ export type AppSpace = {
   id: string
   name: string
   rootPath: string
+  kind?: 'project' | 'global'
   tabs: AppTab[]
   activeTabId: string
   secondaryTabId: string | null
@@ -109,11 +110,14 @@ declare global {
       git: {
         checkInstalled: () => Promise<{ installed: boolean, version?: string, error?: string }>
         exec: (opts: { cwd: string, args: string[] }) => Promise<{ success: boolean, stdout?: string, stderr?: string, error?: string }>
+        clone: (opts: { repoUrl: string; parentDir: string }) => Promise<{ success: boolean; path?: string; error?: string; stdout?: string; stderr?: string }>
       }
       app: {
         loadState: () => Promise<AppSnapshot>
         saveState: (state: AppSnapshot) => Promise<boolean>
         chooseFolder: () => Promise<string | null>
+        openInExplorer: (targetPath: string) => Promise<boolean>
+        getHomeDirectory: () => Promise<string>
       }
       window: {
         minimize: () => Promise<boolean>

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import { randomUUID } from 'node:crypto'
@@ -168,6 +168,21 @@ function setupIpc() {
 
     return result.filePaths[0]
   })
+
+  ipcMain.handle('app:open-in-explorer', async (_, targetPath) => {
+    if (!targetPath) {
+      return false
+    }
+
+    try {
+      const error = await shell.openPath(targetPath)
+      return !error
+    } catch {
+      return false
+    }
+  })
+
+  ipcMain.handle('app:get-home-directory', () => app.getPath('home'))
 
   ipcMain.handle('providers:list', () => listProviders())
 

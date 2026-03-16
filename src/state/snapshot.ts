@@ -10,6 +10,23 @@ export function createSpace(folderPath: string): AppSpace {
     id: createId('space'),
     name: folderPath.split(/[/\\]/).filter(Boolean).at(-1) ?? 'Workspace',
     rootPath: folderPath,
+    kind: 'project',
+    tabs: [ai, browser],
+    activeTabId: ai.id,
+    secondaryTabId: browser.id,
+    tabHistory: [ai.id],
+  }
+}
+
+export function createGlobalSpace(homePath: string): AppSpace {
+  const ai = createTab('ai', homePath)
+  const browser = createTab('browser', homePath)
+
+  return {
+    id: createId('space'),
+    name: 'Empty Space',
+    rootPath: homePath,
+    kind: 'global',
     tabs: [ai, browser],
     activeTabId: ai.id,
     secondaryTabId: browser.id,

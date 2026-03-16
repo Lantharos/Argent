@@ -9,12 +9,15 @@ function on(channel, callback) {
 contextBridge.exposeInMainWorld('opensmith', {
   git: {
     checkInstalled: () => ipcRenderer.invoke('git:check-installed'),
-    exec: (opts) => ipcRenderer.invoke('git:exec', opts)
+    exec: (opts) => ipcRenderer.invoke('git:exec', opts),
+    clone: (opts) => ipcRenderer.invoke('git:clone', opts),
   },
   app: {
     loadState: () => ipcRenderer.invoke('app:load-state'),
     saveState: (state) => ipcRenderer.invoke('app:save-state', state),
     chooseFolder: () => ipcRenderer.invoke('app:choose-folder'),
+    openInExplorer: (targetPath) => ipcRenderer.invoke('app:open-in-explorer', targetPath),
+    getHomeDirectory: () => ipcRenderer.invoke('app:get-home-directory'),
   },
   window: {
     minimize: () => ipcRenderer.invoke('window:minimize'),

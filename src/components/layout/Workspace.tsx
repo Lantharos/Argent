@@ -24,6 +24,7 @@ type Props = {
 
 function RenderPanel({
   spaceId,
+  spaceKind,
   tab,
   isActive,
   cwd,
@@ -33,6 +34,7 @@ function RenderPanel({
   onSendAI,
 }: {
   spaceId: string
+  spaceKind: 'project' | 'global'
   tab: AppTab
   isActive: boolean
   cwd: string
@@ -51,6 +53,7 @@ function RenderPanel({
       tab={tab}
       isActive={isActive}
       spaceId={spaceId}
+      spaceKind={spaceKind}
       cwd={cwd}
       providers={providers}
       updateTab={onUpdateTab}
@@ -240,6 +243,7 @@ export function Workspace({
                 >
                   <RenderPanel
                     spaceId={space.id}
+                    spaceKind={space.kind ?? 'project'}
                     tab={tab}
                     isActive={isActive}
                     cwd={space.rootPath}

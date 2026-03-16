@@ -2,7 +2,7 @@ import { useEffect, useMemo, useReducer, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import type { AppSnapshot, AppTab, AppTabType, ProviderConfig } from './types/opensmith'
 import { appReducer } from './state/reducer'
-import { defaultSnapshot, createSpace } from './state/snapshot'
+import { defaultSnapshot, createGlobalSpace, createSpace } from './state/snapshot'
 import { getActiveSpace, getTab } from './state/selectors'
 import { createTab } from './state/tabFactory'
 import { EmptyState } from './components/layout/EmptyState'
@@ -15,6 +15,7 @@ function App() {
   const [loaded, setLoaded] = useState(false)
   const [bridgeReady, setBridgeReady] = useState(true)
   const [providers, setProviders] = useState<ProviderConfig[]>([])
+  const [homeDirectory, setHomeDirectory] = useState('')
 
   const activeSpace = useMemo(() => getActiveSpace(state), [state])
   const activeTab = useMemo(() => getTab(activeSpace, activeSpace?.activeTabId ?? null), [activeSpace])
@@ -27,9 +28,14 @@ function App() {
         return
       }
 
-      const [snapshot, providerList] = await Promise.all([window.opensmith.app.loadState(), window.opensmith.providers.list()])
+      const [snapshot, providerList, homePath] = await Promise.all([
+        window.opensmith.app.loadState(),
+        window.opensmith.providers.list(),
+        window.opensmith.app.getHomeDirectory(),
+      ])
       dispatch({ type: 'replace', value: snapshot as AppSnapshot })
       setProviders(providerList)
+      setHomeDirectory(homePath)
       setLoaded(true)
     }
 
@@ -48,14 +54,47 @@ function App() {
     return () => clearTimeout(id)
   }, [loaded, state])
 
-  async function createSpaceFromFolder() {
+  async function addSpaceFromFolder() {
     const folder = await window.opensmith.app.chooseFolder()
     if (!folder) {
-      return
+      return false
     }
 
     const space = createSpace(folder)
     dispatch({ type: 'add-space', space })
+    return true
+  }
+
+  async function addEmptySpace() {
+    const fallbackHome = await window.opensmith.app.getHomeDirectory()
+    const space = createGlobalSpace(homeDirectory || fallbackHome)
+    dispatch({ type: 'add-space', space })
+    return true
+  }
+
+  function isAuthCloneError(text: string) {
+    return /authentication failed|could not read username|terminal prompts disabled|password authentication|access denied|permission denied.*(github|gitlab|bitbucket)|invalid username or password/i.test(text)
+  }
+
+  async function cloneRepoToSpace(repoUrl: string, selectedParentDir?: string) {
+    const parentDir = selectedParentDir || await window.opensmith.app.chooseFolder()
+    if (!parentDir) {
+      return { success: false, error: 'Select a destination folder to clone into.', parentDir: null, authRequired: false }
+    }
+
+    const result = await window.opensmith.git.clone({ repoUrl, parentDir })
+    if (!result.success || !result.path) {
+      const details = `${result.error || ''}\n${result.stderr || ''}\n${result.stdout || ''}`
+      return {
+        success: false,
+        error: result.error || result.stderr || 'Failed to clone repository.',
+        parentDir,
+        authRequired: isAuthCloneError(details),
+      }
+    }
+
+    dispatch({ type: 'add-space', space: createSpace(result.path) })
+    return { success: true, parentDir, authRequired: false }
   }
 
   function updateTab(tab: AppTab) {
@@ -133,24 +172,34 @@ function App() {
       <SpaceSidebar
         spaces={state.spaces}
         activeSpaceId={state.activeSpaceId}
-        activeSpace={activeSpace}
-        onActivateSpace={(spaceId) => dispatch({ type: 'set-active-space', spaceId })}
-        onAddSpace={createSpaceFromFolder}
+        onActivateSpace={(spaceId: string) => dispatch({ type: 'set-active-space', spaceId })}
+        onAddSpaceFromFolder={addSpaceFromFolder}
+        onAddEmptySpace={addEmptySpace}
+        onCloneRepo={cloneRepoToSpace}
+        onRenameSpace={(spaceId: string, name: string) => dispatch({ type: 'rename-space', spaceId, name })}
+        onDeleteSpace={(spaceId: string) => dispatch({ type: 'delete-space', spaceId })}
+        onOpenSpaceInExplorer={(spaceId: string) => {
+          const target = state.spaces.find((space) => space.id === spaceId)
+          if (!target) {
+            return Promise.resolve(false)
+          }
+          return window.opensmith.app.openInExplorer(target.rootPath)
+        }}
         onAddTab={(spaceId: string, tabType: AppTabType) => {
           dispatch({ type: 'add-tab', spaceId, tabType })
           dispatch({ type: 'set-active-space', spaceId })
         }}
-        onSelectTab={(spaceId, tabId) => {
+        onSelectTab={(spaceId: string, tabId: string) => {
           dispatch({ type: 'set-active-space', spaceId })
           dispatch({ type: 'set-active-tab', spaceId, tabId })
         }}
-        onReorderTabs={(spaceId, sourceTabId, targetTabId) => {
+        onReorderTabs={(spaceId: string, sourceTabId: string, targetTabId: string) => {
           dispatch({ type: 'reorder-tab', spaceId, sourceTabId, targetTabId })
         }}
-        onCloseTab={(spaceId, tabId) => {
+        onCloseTab={(spaceId: string, tabId: string) => {
           dispatch({ type: 'close-tab', spaceId, tabId })
         }}
-        onRenameTab={(spaceId, tabId, title) => {
+        onRenameTab={(spaceId: string, tabId: string, title: string) => {
           dispatch({
             type: 'update-tab',
             spaceId,
@@ -174,7 +223,7 @@ function App() {
         />
       ) : (
         <div className="workspace">
-          <EmptyState onCreateSpace={createSpaceFromFolder} />
+          <EmptyState onCreateSpace={addSpaceFromFolder} />
         </div>
       )}
     </main>

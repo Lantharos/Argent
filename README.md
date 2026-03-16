@@ -7,12 +7,14 @@ OpenSmith is an Electron-based IDE that brings together code editing, terminal, 
 ## Features
 
 ### Multi-Tab Workspace
+
 - **AI Tab** - Chat with AI assistants, get code suggestions, and more
 - **Editor Tab** - Full-featured code editor with syntax highlighting
 - **Terminal Tab** - Integrated terminal powered by xterm.js
 - **Browser Tab** - Built-in web browser for documentation and research
 
 ### Modern Architecture
+
 - **Electron** - Cross-platform desktop app foundation
 - **React 19** - UI framework with latest features
 - **TypeScript** - Type-safe codebase
@@ -55,7 +57,7 @@ bun run build
 
 ## Project Structure
 
-```
+```text
 opensmith/
 ├── electron/           # Electron main process code
 │   ├── ai/            # AI provider integrations
@@ -75,6 +77,7 @@ opensmith/
 ## Configuration
 
 OpenSmith stores its configuration locally using `electron-store`. Configuration includes:
+
 - AI provider settings (API keys, endpoints)
 - UI preferences
 - Window state (size, position)
