@@ -31,7 +31,7 @@ function spawnCliProcess(command, args, options = {}) {
   })
 }
 
-function createJsonRpcConnection(proc, requestTimeoutMs = 120000) {
+function createJsonRpcConnection(proc) {
   const rl = readline.createInterface({ input: proc.stdout })
   let nextId = 1
   const pending = new Map()
@@ -48,18 +48,11 @@ function createJsonRpcConnection(proc, requestTimeoutMs = 120000) {
     nextId += 1
 
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        pending.delete(id)
-        reject(new Error(`Timed out waiting for ${method}`))
-      }, requestTimeoutMs)
-
       pending.set(id, {
         resolve: (result) => {
-          clearTimeout(timer)
           resolve(result)
         },
         reject: (error) => {
-          clearTimeout(timer)
           reject(error)
         },
       })
@@ -671,7 +664,6 @@ async function runToolCall(cwd, name, args) {
     const { stdout, stderr } = await execAsync(args?.command ?? '', {
       cwd: root,
       windowsHide: true,
-      timeout: 120000,
       maxBuffer: 1024 * 1024,
       shell: true,
     })
@@ -929,13 +921,11 @@ async function requestViaCodexAppServer(parsed, provider, emitEvent = () => {}) 
       },
     })
 
-    await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('Timed out waiting for Codex turn completion')), 180000)
+    await new Promise((resolve) => {
       const stop = rpc.onNotification((msg) => {
         if (msg.method === 'turn/completed') {
           const doneTurnId = msg?.params?.turn?.id
           if (!activeTurnId || !doneTurnId || doneTurnId === activeTurnId) {
-            clearTimeout(timeout)
             stop()
             resolve(true)
           }
@@ -987,6 +977,15 @@ async function requestViaOpenCodeAcp(parsed, provider, emitEvent = () => {}, opt
 
     const normalizeToolStatus = (update) => {
       const raw = typeof update?.status === 'string' ? update.status : null
+      if (raw === 'running') {
+        return 'in_progress'
+      }
+      if (raw === 'done' || raw === 'success' || raw === 'succeeded') {
+        return 'completed'
+      }
+      if (raw === 'error' || raw === 'cancelled' || raw === 'canceled') {
+        return 'failed'
+      }
       if (raw === 'pending' || raw === 'in_progress' || raw === 'completed' || raw === 'failed') {
         return raw
       }
@@ -1010,22 +1009,140 @@ async function requestViaOpenCodeAcp(parsed, provider, emitEvent = () => {}, opt
     }
 
     const pickToolTitle = (update) => {
-      const label =
+      const rawInput = update?.rawInput && typeof update.rawInput === 'object' ? update.rawInput : null
+      const rawTitle =
         update?.title ||
         update?.toolName ||
         update?.name ||
         update?.tool?.name ||
         update?.kind ||
         'Tool call'
+
+      if (typeof rawTitle === 'string' && rawTitle.toLowerCase() === 'task') {
+        const subagentType =
+          typeof rawInput?.subagent_type === 'string'
+            ? rawInput.subagent_type
+            : typeof rawInput?.subagentType === 'string'
+              ? rawInput.subagentType
+              : null
+        const description =
+          typeof rawInput?.description === 'string'
+            ? rawInput.description.trim()
+            : null
+        if (description && description.length > 0) {
+          return subagentType ? `${subagentType} subagent` : 'Subagent'
+        }
+        return subagentType ? `${subagentType} subagent` : 'Subagent'
+      }
+
+      const label =
+        rawTitle
       return typeof label === 'string' && label.trim().length > 0 ? label : 'Tool call'
     }
 
     const pickToolDetail = (update) => {
+      const kind = typeof update?.kind === 'string' ? update.kind.toLowerCase() : ''
+      const title = typeof update?.title === 'string' ? update.title.toLowerCase() : ''
+      const rawInput = update?.rawInput && typeof update.rawInput === 'object' ? update.rawInput : null
+      const rawOutput = update?.rawOutput && typeof update.rawOutput === 'object' ? update.rawOutput : null
+      const isTaskTool = kind === 'task' || title === 'task' || title.startsWith('explore ') || title.startsWith('map ')
+      const contentText = Array.isArray(update?.content)
+        ? update.content
+            .map((item) => (item?.type === 'content' && item?.content?.type === 'text' ? item.content.text : ''))
+            .filter((item) => typeof item === 'string' && item.trim().length > 0)
+            .join('\n')
+        : null
+
+      if (kind === 'read') {
+        return null
+      }
+
+      if (kind === 'glob' || kind === 'list' || kind === 'search') {
+        return null
+      }
+
+      if (contentText && contentText.includes('<type>file</type>') && contentText.includes('<content>')) {
+        return null
+      }
+
+      if (title.includes('todo') || title.includes('todos')) {
+        if (contentText && contentText.trim().length > 0) {
+          return contentText
+        }
+
+        const todoOutput = rawOutput?.output
+        if (typeof todoOutput === 'string' && todoOutput.trim().length > 0) {
+          return todoOutput
+        }
+
+        if (Array.isArray(todoOutput)) {
+          try {
+            return JSON.stringify(todoOutput)
+          } catch {
+            return null
+          }
+        }
+      }
+
+      if (isTaskTool) {
+        const description = typeof rawInput?.description === 'string' ? rawInput.description.trim() : ''
+        const prompt = typeof rawInput?.prompt === 'string' ? rawInput.prompt.trim() : ''
+        const subagentType =
+          typeof rawInput?.subagent_type === 'string'
+            ? rawInput.subagent_type.trim()
+            : typeof rawInput?.subagentType === 'string'
+              ? rawInput.subagentType.trim()
+              : ''
+
+        const details = [
+          description || prompt,
+          subagentType ? `agent: ${subagentType}` : '',
+        ].filter((value) => typeof value === 'string' && value.trim().length > 0)
+
+        if (details.length === 0) {
+          return null
+        }
+
+        const detail = details.join(' • ')
+        return detail.length > 200 ? `${detail.slice(0, 200)}...` : detail
+      }
+
+      if (typeof update?.title === 'string' && update.title.toLowerCase() === 'task' && rawInput) {
+        const description = typeof rawInput.description === 'string' ? rawInput.description.trim() : ''
+        const prompt = typeof rawInput.prompt === 'string' ? rawInput.prompt.trim() : ''
+        const subagentType =
+          typeof rawInput.subagent_type === 'string'
+            ? rawInput.subagent_type.trim()
+            : typeof rawInput.subagentType === 'string'
+              ? rawInput.subagentType.trim()
+              : ''
+        const childSessionId =
+          typeof rawOutput?.output?.sessionID === 'string'
+            ? rawOutput.output.sessionID
+            : typeof rawOutput?.output?.sessionId === 'string'
+              ? rawOutput.output.sessionId
+              : ''
+
+        const lines = [
+          description || prompt,
+          subagentType ? `agent: ${subagentType}` : '',
+          childSessionId ? `session: ${childSessionId}` : '',
+        ].filter((value) => typeof value === 'string' && value.trim().length > 0)
+
+        const detail = lines.join(' • ')
+        if (detail) {
+          return detail.length > 240 ? `${detail.slice(0, 240)}...` : detail
+        }
+      }
+
       const candidates = [
+        contentText,
         update?.description,
         update?.message,
         update?.command,
         update?.path,
+        rawInput && typeof rawInput === 'object' ? JSON.stringify(rawInput) : null,
+        rawOutput && typeof rawOutput === 'object' ? JSON.stringify(rawOutput) : null,
         update?.args && Array.isArray(update.args) ? update.args.join(' ') : null,
         update?.toolInput && typeof update.toolInput === 'object' ? JSON.stringify(update.toolInput) : null,
       ]
@@ -1033,7 +1150,17 @@ async function requestViaOpenCodeAcp(parsed, provider, emitEvent = () => {}, opt
       if (!detail) {
         return null
       }
-      return detail.length > 180 ? `${detail.slice(0, 180)}...` : detail
+
+      const cleaned = detail
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+
+      if (!cleaned) {
+        return null
+      }
+
+      return cleaned.length > 180 ? `${cleaned.slice(0, 180)}...` : cleaned
     }
 
     const stopListening = rpc.onNotification((msg) => {
@@ -1095,6 +1222,34 @@ async function requestViaOpenCodeAcp(parsed, provider, emitEvent = () => {}, opt
           title: pickToolTitle(update),
           detail: pickToolDetail(update),
         })
+        return
+      }
+
+      if (update?.sessionUpdate === 'plan') {
+        const entries = Array.isArray(update?.entries)
+          ? update.entries
+              .map((entry) => {
+                const content = typeof entry?.content === 'string' ? entry.content : null
+                if (!content || content.trim().length === 0) {
+                  return null
+                }
+                const status = typeof entry?.status === 'string' ? entry.status : 'pending'
+                const priority = typeof entry?.priority === 'string' ? entry.priority : null
+                return {
+                  content: content.trim(),
+                  status,
+                  priority,
+                }
+              })
+              .filter(Boolean)
+          : []
+
+        if (entries.length > 0) {
+          emitEvent({
+            type: 'plan',
+            entries,
+          })
+        }
         return
       }
 
@@ -1272,6 +1427,8 @@ async function requestViaOpenCodeAcp(parsed, provider, emitEvent = () => {}, opt
           prompt: promptParts,
         })
       } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+
         if (userCommand?.name === 'compact') {
           emitEvent({
             type: 'tool',
@@ -1279,7 +1436,7 @@ async function requestViaOpenCodeAcp(parsed, provider, emitEvent = () => {}, opt
             status: 'failed',
             kind: 'session',
             title: 'Compacting...',
-            detail: error instanceof Error ? error.message : 'Compaction command failed',
+            detail: message || 'Compaction command failed',
           })
         }
         throw error
@@ -1300,13 +1457,6 @@ async function requestViaOpenCodeAcp(parsed, provider, emitEvent = () => {}, opt
       if (promptUsage) {
         latestUsage = promptUsage
         runtime.sessionUsageById.set(sessionId, promptUsage)
-      }
-
-      if (!assistantText.trim() && !userCommand && !aborted) {
-        const waitUntil = Date.now() + 1800
-        while (!assistantText.trim() && Date.now() < waitUntil && !aborted) {
-          await new Promise((resolve) => setTimeout(resolve, 30))
-        }
       }
 
       const content = assistantText.trim()
@@ -1355,11 +1505,6 @@ async function requestViaOpenCodeAcp(parsed, provider, emitEvent = () => {}, opt
             cwd: workingDirectory,
             mcpServers: [],
           })
-
-          const waitUntilReplay = Date.now() + 1200
-          while (!replayAssistantText.trim() && Date.now() < waitUntilReplay && !aborted) {
-            await new Promise((resolve) => setTimeout(resolve, 30))
-          }
         } catch (error) {
           // no-op
         } finally {
@@ -1403,7 +1548,7 @@ async function requestViaOpenCodeAcp(parsed, provider, emitEvent = () => {}, opt
   })
 }
 
-async function waitForAvailableCommands(runtime, sessionId, timeoutMs = 1200) {
+async function waitForAvailableCommands(runtime, sessionId) {
   const cached = runtime.availableCommandsBySessionId.get(sessionId)
   if (cached && cached.length > 0) {
     return cached
@@ -1416,7 +1561,6 @@ async function waitForAvailableCommands(runtime, sessionId, timeoutMs = 1200) {
         return
       }
       settled = true
-      clearTimeout(timer)
       stop()
       resolve(commands)
     }
@@ -1444,10 +1588,6 @@ async function waitForAvailableCommands(runtime, sessionId, timeoutMs = 1200) {
       runtime.availableCommandsBySessionId.set(sessionId, commands)
       finish(commands)
     })
-
-    const timer = setTimeout(() => {
-      finish([])
-    }, timeoutMs)
   })
 }
 

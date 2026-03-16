@@ -46,6 +46,14 @@ export type AIStreamEvent =
   | { type: 'thought-delta'; delta: string }
   | { type: 'commands'; commands: Array<{ name: string; description?: string }> }
   | {
+      type: 'plan'
+      entries: Array<{
+        content: string
+        status: 'pending' | 'in_progress' | 'completed' | 'cancelled' | string
+        priority?: 'low' | 'medium' | 'high' | string | null
+      }>
+    }
+  | {
       type: 'tool'
       id: string | null
       status: 'pending' | 'in_progress' | 'completed' | 'failed' | string

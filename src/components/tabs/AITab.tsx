@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import type { Components } from 'react-markdown'
 import {
+  Check,
   ChevronDown,
   CircleDot,
   Copy,
@@ -229,6 +230,94 @@ function parseToolMessage(content: string) {
   }
 }
 
+function parsePlanMessage(content: string) {
+  if (!content.startsWith('[[plan]]')) {
+    return null
+  }
+
+  const raw = content.slice('[[plan]]'.length)
+  let decoded = raw
+  try {
+    decoded = decodeURIComponent(raw)
+  } catch {
+    decoded = raw
+  }
+
+  try {
+    const parsed = JSON.parse(decoded)
+    if (!Array.isArray(parsed)) {
+      return null
+    }
+    return parsed
+      .map((entry) => {
+        const contentValue = typeof entry?.content === 'string' ? entry.content.trim() : ''
+        if (!contentValue) {
+          return null
+        }
+        const status = typeof entry?.status === 'string' ? entry.status : 'pending'
+        const priority = typeof entry?.priority === 'string' ? entry.priority : null
+        return {
+          content: contentValue,
+          status,
+          priority,
+        }
+      })
+      .filter((entry): entry is { content: string; status: string; priority: string | null } => Boolean(entry))
+  } catch {
+    return null
+  }
+}
+
+function planStatusLabel(status: string) {
+  if (status === 'in_progress') return 'Running'
+  if (status === 'completed' || status === 'cancelled') return 'Done'
+  if (status === 'pending') return 'Pending'
+  return status
+}
+
+function parseTodoEntriesFromDetail(detail?: string | null) {
+  if (!detail) {
+    return null
+  }
+
+  const trimmed = detail.trim()
+  let jsonText = trimmed
+  if (!jsonText.startsWith('[') || !jsonText.endsWith(']')) {
+    const firstBracket = jsonText.indexOf('[')
+    const lastBracket = jsonText.lastIndexOf(']')
+    if (firstBracket < 0 || lastBracket <= firstBracket) {
+      return null
+    }
+    jsonText = jsonText.slice(firstBracket, lastBracket + 1)
+  }
+
+  if (!jsonText.startsWith('[') || !jsonText.endsWith(']')) {
+    return null
+  }
+
+  try {
+    const parsed = JSON.parse(jsonText)
+    if (!Array.isArray(parsed)) {
+      return null
+    }
+
+    const entries = parsed
+      .map((entry) => {
+        const content = typeof entry?.content === 'string' ? entry.content.trim() : ''
+        if (!content) {
+          return null
+        }
+        const status = typeof entry?.status === 'string' ? entry.status : 'pending'
+        return { content, status }
+      })
+      .filter((entry): entry is { content: string; status: string } => Boolean(entry))
+
+    return entries.length > 0 ? entries : null
+  } catch {
+    return null
+  }
+}
+
 function formatThoughtMessage(content: string) {
   return `[[thought]]${encodeURIComponent(content)}`
 }
@@ -353,6 +442,7 @@ function readFileAsBase64(file: File) {
 
 export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, providers, onChange, onSend }: Props) {
   const [loading, setLoading] = useState(false)
+  const [copiedMessageIndex, setCopiedMessageIndex] = useState<number | null>(null)
   const [isComposerDragging, setIsComposerDragging] = useState(false)
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
   const [activeMetaPopover, setActiveMetaPopover] = useState<'local' | 'access' | 'context' | null>(null)
@@ -368,6 +458,8 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
 
   const activeRequestIdRef = useRef<string | null>(null)
+  const lastStreamEventAtRef = useRef<number>(0)
+  const toolStatusByIdRef = useRef<Record<string, string>>({})
   const cancelRequestedRef = useRef(false)
   const toolMessageIndexByIdRef = useRef<Record<string, number>>({})
   const pendingAssistantTextRef = useRef('')
@@ -378,6 +470,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
   const scrollRef = useRef<HTMLDivElement>(null)
   const isAutoScrolling = useRef(true)
   const isActiveRef = useRef(isActive)
+  const copiedResetTimerRef = useRef<number | null>(null)
 
   useEffect(() => {
     tabRef.current = tab
@@ -390,6 +483,15 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
   useEffect(() => {
     isActiveRef.current = isActive
   }, [isActive])
+
+  useEffect(() => {
+    return () => {
+      if (copiedResetTimerRef.current !== null) {
+        window.clearTimeout(copiedResetTimerRef.current)
+        copiedResetTimerRef.current = null
+      }
+    }
+  }, [])
 
   const selectedProvider = useMemo<ProviderConfig | null>(
     () => providers.find((provider) => provider.id === 'opencode-acp') ?? null,
@@ -604,7 +706,12 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
 
     for (let index = tab.messages.length - 1; index >= 0; index -= 1) {
       const message = tab.messages[index]
-      if (message.role === 'assistant' && !parseToolMessage(message.content) && !parseThoughtMessage(message.content)) {
+      if (
+        message.role === 'assistant' &&
+        !parseToolMessage(message.content) &&
+        !parseThoughtMessage(message.content) &&
+        !parsePlanMessage(message.content)
+      ) {
         return index
       }
     }
@@ -656,7 +763,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
       const isMetaLine =
         last?.role === 'assistant' &&
         typeof last?.content === 'string' &&
-        (last.content.startsWith('[[tool]]') || last.content.startsWith('[[thought]]'))
+        (last.content.startsWith('[[tool]]') || last.content.startsWith('[[thought]]') || last.content.startsWith('[[plan]]'))
 
       if (last && last.role === 'assistant' && !isMetaLine) {
         activeAssistantMessageIndexRef.current = messages.length - 1
@@ -741,6 +848,8 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
         return
       }
 
+      lastStreamEventAtRef.current = Date.now()
+
       const event = payload.event as AIStreamEvent
       if (event.type === 'thought-delta') {
         if (!event.delta) {
@@ -784,8 +893,14 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
         return
       }
 
+      if (event.type === 'plan') {
+        // Plan updates are already reflected by tool-call rows; skip custom plan cards.
+        return
+      }
+
       if (event.type === 'tool') {
         const toolId = event.id || `${event.kind || 'tool'}:${event.title}`
+        toolStatusByIdRef.current[toolId] = event.status
 
         updateTab((current) => {
           const messages = [...current.messages]
@@ -815,6 +930,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
 
       if (event.type === 'error') {
         activeRequestIdRef.current = null
+        toolStatusByIdRef.current = {}
         activeAssistantMessageIndexRef.current = null
         setLoading(false)
         const wasCancelled = /cancel|aborted/i.test(event.message)
@@ -847,6 +963,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
 
       if (event.type === 'done') {
         activeRequestIdRef.current = null
+        toolStatusByIdRef.current = {}
         activeAssistantMessageIndexRef.current = null
         setLoading(false)
 
@@ -933,6 +1050,83 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
       pendingAssistantTextRef.current = ''
     }
   }, [cwd, enqueueAssistantDelta, selectedProvider, updateTab])
+
+  useEffect(() => {
+    if (!loading) {
+      return
+    }
+
+    const timer = window.setInterval(() => {
+      const requestId = activeRequestIdRef.current
+      if (!requestId) {
+        return
+      }
+
+      const lastEventAt = lastStreamEventAtRef.current
+      if (!lastEventAt) {
+        return
+      }
+
+      const idleForMs = Date.now() - lastEventAt
+      if (idleForMs < 8000) {
+        return
+      }
+
+      const statuses = Object.values(toolStatusByIdRef.current)
+      const hasActiveTools = statuses.some((status) => status === 'pending' || status === 'in_progress' || status === 'running')
+      if (hasActiveTools) {
+        return
+      }
+
+      const hasAssistantText = tabRef.current.messages.some(
+        (message) =>
+          message.role === 'assistant' &&
+          !parseToolMessage(message.content) &&
+          !parseThoughtMessage(message.content) &&
+          !parsePlanMessage(message.content) &&
+          message.content.trim().length > 0,
+      )
+
+      if (!hasAssistantText) {
+        return
+      }
+
+      const staleRequestId = activeRequestIdRef.current
+      activeRequestIdRef.current = null
+      toolStatusByIdRef.current = {}
+      activeAssistantMessageIndexRef.current = null
+      setLoading(false)
+
+      updateTab((current) => {
+        const messages = current.messages
+          .filter((msg) => !(msg.role === 'assistant' && parseThoughtMessage(msg.content) !== null))
+          .map((msg) => {
+            if (msg.role === 'assistant') {
+              const tool = parseToolMessage(msg.content)
+              if (tool && (tool.status === 'in_progress' || tool.status === 'pending')) {
+                return { ...msg, content: formatToolMessage(tool.title, 'completed', tool.kind, tool.detail) }
+              }
+            }
+            return msg
+          })
+
+        return {
+          ...current,
+          messages,
+          isGenerating: false,
+          hasUnread: !isActiveRef.current,
+        }
+      })
+
+      if (staleRequestId) {
+        void window.opensmith.ai.streamCancel({ requestId: staleRequestId }).catch(() => {
+          // no-op
+        })
+      }
+    }, 1000)
+
+    return () => window.clearInterval(timer)
+  }, [loading, updateTab])
 
   useEffect(() => {
     function handlePointerDown(event: PointerEvent) {
@@ -1341,6 +1535,8 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
     }))
 
     toolMessageIndexByIdRef.current = {}
+    toolStatusByIdRef.current = {}
+    lastStreamEventAtRef.current = 0
     activeAssistantMessageIndexRef.current = null
     cancelRequestedRef.current = false
 
@@ -1378,6 +1574,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
       }
 
       activeRequestIdRef.current = streamStart.requestId
+      lastStreamEventAtRef.current = Date.now()
     } catch {
       if (cancelRequestedRef.current) {
         setLoading(false)
@@ -1420,14 +1617,13 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
     }
   }
 
-  async function copyToClipboard(value: string) {
+  async function copyToClipboard(value: string, messageIndex: number) {
     if (!value) {
       return
     }
 
     try {
       await navigator.clipboard.writeText(value)
-      return
     } catch {
       const textArea = document.createElement('textarea')
       textArea.value = value
@@ -1439,6 +1635,15 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
       document.execCommand('copy')
       document.body.removeChild(textArea)
     }
+
+    setCopiedMessageIndex(messageIndex)
+    if (copiedResetTimerRef.current !== null) {
+      window.clearTimeout(copiedResetTimerRef.current)
+    }
+    copiedResetTimerRef.current = window.setTimeout(() => {
+      setCopiedMessageIndex((current) => (current === messageIndex ? null : current))
+      copiedResetTimerRef.current = null
+    }, 1200)
   }
 
   async function handleRetryLastAssistant() {
@@ -1471,6 +1676,8 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
 
     activeRequestIdRef.current = null
     toolMessageIndexByIdRef.current = {}
+    toolStatusByIdRef.current = {}
+    lastStreamEventAtRef.current = 0
     activeAssistantMessageIndexRef.current = null
     cancelRequestedRef.current = false
 
@@ -1517,6 +1724,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
       }
 
       activeRequestIdRef.current = streamStart.requestId
+      lastStreamEventAtRef.current = Date.now()
     } catch {
       if (cancelRequestedRef.current) {
         setLoading(false)
@@ -1568,6 +1776,8 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
   async function handleStopGeneration() {
     const requestId = activeRequestIdRef.current
     cancelRequestedRef.current = true
+    toolStatusByIdRef.current = {}
+    lastStreamEventAtRef.current = 0
     activeAssistantMessageIndexRef.current = null
 
     setLoading(false)
@@ -1638,6 +1848,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
           (() => {
             const parsedTool = message.role === 'assistant' ? parseToolMessage(message.content) : null
             const parsedThought = message.role === 'assistant' ? parseThoughtMessage(message.content) : null
+            const parsedPlan = message.role === 'assistant' ? parsePlanMessage(message.content) : null
             const userImageAttachments =
               message.role === 'user'
                 ? (message.attachments ?? []).filter((attachment) => attachment.kind === 'image')
@@ -1655,6 +1866,8 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
 
             if (toolData) {
               const isCompacting = toolData.kind === 'session' && toolData.title.trim().toLowerCase() === 'compacting...'
+              const isTodoTool = /\btodos?\b/i.test(toolData.title)
+              const todoEntries = parseTodoEntriesFromDetail(toolData.detail)
               return (
                 <div key={index} className="mr-auto w-full max-w-full py-0.5">
                   <div className="flex max-w-full items-start gap-2.5 py-1 text-[13px]">
@@ -1663,7 +1876,18 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
                     </span>
                     <div className="min-w-0 flex-1">
                       <div className={isCompacting ? 'ai-compacting-shimmer truncate font-medium' : 'truncate text-[#cccccc]'}>{toolData.title}</div>
-                      {toolData.detail ? <div className="truncate text-[11px] text-[#7d7d7d]">{toolData.detail}</div> : null}
+                      {todoEntries ? (
+                        <div className="mt-1 space-y-1 text-[12px] text-[#9a9a9a]">
+                          {todoEntries.map((entry, todoIndex) => (
+                            <div key={`${entry.content}-${todoIndex}`} className="flex items-start justify-between gap-2">
+                              <div className="min-w-0 truncate text-[#bdbdbd]">{entry.content}</div>
+                              <div className="shrink-0 text-[11px] text-[#8d8d8d]">{planStatusLabel(entry.status)}</div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : isTodoTool ? null : toolData.detail ? (
+                        <div className="truncate text-[11px] text-[#7d7d7d]">{toolData.detail}</div>
+                      ) : null}
                     </div>
                     <span className={`text-[12px] flex items-center gap-1.5 ${
                       toolData.status === 'failed' ? 'text-red-400' :
@@ -1691,6 +1915,10 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
               )
             }
 
+            if (parsedPlan && parsedPlan.length > 0) {
+              return null
+            }
+
             return (
           <div
             key={index}
@@ -1704,9 +1932,13 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
               <div>
                 <div className="prose prose-invert max-w-none prose-p:my-2 prose-p:leading-7 prose-headings:my-2 prose-strong:text-[#efefef] prose-em:text-[#d6d6d6] prose-code:text-[#d9d9d9] prose-pre:bg-[#111111]/90 prose-pre:border prose-pre:border-white/10 prose-pre:rounded-xl prose-blockquote:border-l-white/25 prose-blockquote:text-[#c9c9c9] prose-table:my-3 prose-table:w-full prose-th:border prose-th:border-white/20 prose-th:px-2 prose-th:py-1 prose-td:border prose-td:border-white/15 prose-td:px-2 prose-td:py-1 prose-hr:border-white/15">
                   <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={markdownComponents}>
-                    {normalizeMarkdownSpacing(message.content || '')}
+                    {normalizeMarkdownSpacing(
+                      loading && index === activeAssistantMessageIndexRef.current && (message.content || '').trim().length > 0
+                        ? `${message.content || ''}▌`
+                        : message.content || '',
+                    )}
                   </ReactMarkdown>
-                  {loading && index === activeAssistantMessageIndexRef.current ? (
+                  {loading && index === activeAssistantMessageIndexRef.current && (message.content || '').trim().length === 0 ? (
                     <span className="inline-block animate-pulse text-[#f0f0f0]">▌</span>
                   ) : null}
                 </div>
@@ -1720,7 +1952,8 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
                     if (
                       tab.messages[i].role === 'assistant' &&
                       !parseToolMessage(tab.messages[i].content) &&
-                      !parseThoughtMessage(tab.messages[i].content)
+                      !parseThoughtMessage(tab.messages[i].content) &&
+                      !parsePlanMessage(tab.messages[i].content)
                     ) {
                       hasMoreText = true
                       break
@@ -1736,11 +1969,11 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
                           type="button"
                           className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[#9a9a9a] hover:bg-white/8 hover:text-[#d0d0d0]"
                           onClick={() => {
-                            void copyToClipboard(message.content || '')
+                            void copyToClipboard(message.content || '', index)
                           }}
                         >
-                          <Copy className="h-3.5 w-3.5" />
-                          Copy
+                          {copiedMessageIndex === index ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                          {copiedMessageIndex === index ? 'Copied' : 'Copy'}
                         </button>
                         {index === lastAssistantTextIndex ? (
                           <button
