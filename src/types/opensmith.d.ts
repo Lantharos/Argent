@@ -88,6 +88,29 @@ export type EditorTabData = AppTabBase & {
 
 export type AppTab = AITabData | BrowserTabData | TerminalTabData | EditorTabData | GitTabData
 
+export type SplitOrientation = 'vertical' | 'horizontal'
+
+export type AppTabSplitLeaf = {
+  id: string
+  type: 'leaf'
+  tabId: string
+}
+
+export type AppTabSplitBranch = {
+  id: string
+  type: 'split'
+  orientation: SplitOrientation
+  first: AppTabSplitNode
+  second: AppTabSplitNode
+}
+
+export type AppTabSplitNode = AppTabSplitLeaf | AppTabSplitBranch
+
+export type AppTabGroup = {
+  id: string
+  root: AppTabSplitNode
+}
+
 export type AppSpace = {
   id: string
   name: string
@@ -96,6 +119,7 @@ export type AppSpace = {
   tabs: AppTab[]
   activeTabId: string
   secondaryTabId: string | null
+  tabGroups?: AppTabGroup[]
   tabHistory?: string[]
 }
 

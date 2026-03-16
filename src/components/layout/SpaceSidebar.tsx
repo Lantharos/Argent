@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Ellipsis, Loader2 } from 'lucide-react'
-import type { AppSpace, AppTab, AppTabType } from '../../types/opensmith'
+import type { AppSpace, AppTab, AppTabGroup, AppTabSplitNode, AppTabType } from '../../types/opensmith'
 
 type Props = {
   spaces: AppSpace[]
@@ -28,6 +28,13 @@ type SpaceMenuState = {
 type AddSpaceMenuState = {
   y: number
 }
+
+type SidebarEntry =
+  | { type: 'tab'; tab: AppTab }
+  | { type: 'group'; groupId: string; tabs: AppTab[] }
+
+const TAB_DRAG_MIME = 'application/x-opensmith-tab'
+const TAB_DRAG_FALLBACK_PREFIX = 'opensmith-tab:'
 
 function defaultTabTitle(type: AppTabType) {
   if (type === 'ai') return 'AI Chat'
@@ -144,6 +151,79 @@ function renderTabIcon(tab: AppTab) {
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value))
+}
+
+function collectGroupTabIds(node: AppTabSplitNode, out: string[]) {
+  if (node.type === 'leaf') {
+    out.push(node.tabId)
+    return
+  }
+
+  collectGroupTabIds(node.first, out)
+  collectGroupTabIds(node.second, out)
+}
+
+function findGroupForTab(groups: AppTabGroup[] | undefined, tabId: string): AppTabGroup | null {
+  if (!groups?.length) {
+    return null
+  }
+
+  for (const group of groups) {
+    const ids: string[] = []
+    collectGroupTabIds(group.root, ids)
+    if (ids.includes(tabId)) {
+      return group
+    }
+  }
+
+  return null
+}
+
+function buildSidebarEntries(space: AppSpace): SidebarEntry[] {
+  const groups = space.tabGroups ?? []
+  if (groups.length === 0) {
+    return space.tabs.map((tab) => ({ type: 'tab', tab }))
+  }
+
+  const groupByTab = new Map<string, AppTabGroup>()
+  for (const group of groups) {
+    const ids: string[] = []
+    collectGroupTabIds(group.root, ids)
+    for (const id of ids) {
+      groupByTab.set(id, group)
+    }
+  }
+
+  const emittedGroups = new Set<string>()
+  const entries: SidebarEntry[] = []
+
+  for (const tab of space.tabs) {
+    const group = groupByTab.get(tab.id)
+    if (!group) {
+      entries.push({ type: 'tab', tab })
+      continue
+    }
+
+    if (emittedGroups.has(group.id)) {
+      continue
+    }
+
+    const ids: string[] = []
+    collectGroupTabIds(group.root, ids)
+    const groupedTabs = space.tabs.filter((entry) => ids.includes(entry.id))
+    if (groupedTabs.length < 2) {
+      for (const groupedTab of groupedTabs) {
+        entries.push({ type: 'tab', tab: groupedTab })
+      }
+      emittedGroups.add(group.id)
+      continue
+    }
+
+    entries.push({ type: 'group', groupId: group.id, tabs: groupedTabs })
+    emittedGroups.add(group.id)
+  }
+
+  return entries
 }
 
 function toSshUrl(input: string) {
@@ -272,6 +352,20 @@ export function SpaceSidebar({
 
     onReorderTabs(spaceId, dragTabPayload.tabId, targetTabId)
     setDragTabPayload(null)
+  }
+
+  function setTabDragData(event: React.DragEvent<HTMLElement>, spaceId: string, tabId: string, options?: { requireAlt?: boolean }) {
+    if (options?.requireAlt && !event.altKey) {
+      event.preventDefault()
+      return
+    }
+
+    const payload = JSON.stringify({ spaceId, tabId })
+    event.dataTransfer.setData(TAB_DRAG_MIME, payload)
+    event.dataTransfer.setData('text/plain', `${TAB_DRAG_FALLBACK_PREFIX}${spaceId}:${tabId}`)
+    event.dataTransfer.effectAllowed = 'move'
+    setDragTabPayload({ spaceId, tabId })
+    window.dispatchEvent(new CustomEvent('opensmith:tab-drag-start', { detail: { spaceId, tabId } }))
   }
 
   function commitTabRename(spaceId: string, tabId: string, fallbackType: AppTabType) {
@@ -432,7 +526,7 @@ export function SpaceSidebar({
   return (
     <aside
       ref={sidebarRef}
-      className="w-[292px] flex-shrink-0 flex flex-col pt-3 pb-3 px-3 gap-3 bg-black/26 backdrop-blur-2xl shadow-[inset_-1px_0_0_0_rgba(255,255,255,0.05)] relative"
+      className="w-[292px] flex-shrink-0 flex flex-col pt-3 pb-3 px-3 gap-3 bg-black/26 backdrop-blur-2xl relative"
       onMouseDownCapture={signalUiInteraction}
       onContextMenuCapture={signalUiInteraction}
     >
@@ -581,8 +675,19 @@ export function SpaceSidebar({
           const isActive = space.id === activeSpaceId
           const isCollapsed = existingSpaceIds.has(space.id) && collapsedSpaceIds.includes(space.id)
           const activeSpaceTab = space.tabs.find((tab) => tab.id === space.activeTabId) ?? null
+          const activeSpaceGroup = activeSpaceTab ? findGroupForTab(space.tabGroups, activeSpaceTab.id) : null
+          const activeGroupTabIds = (() => {
+            if (!activeSpaceGroup) {
+              return [] as string[]
+            }
+            const ids: string[] = []
+            collectGroupTabIds(activeSpaceGroup.root, ids)
+            return ids
+          })()
+          const activeGroupTabs = space.tabs.filter((tab) => activeGroupTabIds.includes(tab.id)).slice(0, 4)
           const showCollapsedPreview = isActive && isCollapsed && Boolean(activeSpaceTab)
           const isGlobalSpace = (space.kind ?? 'project') === 'global'
+          const entries = buildSidebarEntries(space)
 
           return (
             <div key={space.id} className="flex flex-col">
@@ -636,64 +741,16 @@ export function SpaceSidebar({
 
               {showCollapsedPreview && activeSpaceTab ? (
                 <div className="flex flex-col mt-1 mb-2 ml-4 pl-3 border-l border-white/12">
-                  <button
-                    className="flex items-center gap-2 px-2.5 py-1.5 text-[12.5px] rounded-md text-[#d7d7d7] bg-white/8 text-left truncate"
-                    onMouseDown={(event) => {
-                      if (event.button === 1) {
-                        event.preventDefault()
-                        event.stopPropagation()
-                        onCloseTab(space.id, activeSpaceTab.id)
-                      }
-                    }}
-                    onAuxClick={(event) => {
-                      if (event.button === 1) {
-                        event.preventDefault()
-                        event.stopPropagation()
-                      }
-                    }}
-                    onClick={() => {
-                      onActivateSpace(space.id)
-                      onSelectTab(space.id, activeSpaceTab.id)
-                    }}
-                  >
-                    {renderTabIcon(activeSpaceTab)}
-                    <span className="truncate">{activeSpaceTab.title}</span>
-                  </button>
-                </div>
-              ) : null}
-
-              {!isCollapsed ? (
-                <div className="flex flex-col gap-0.5 mt-1 mb-2 ml-4 pl-3 border-l border-white/12">
-                  {space.tabs.map((tab) => (
-                    <div
-                      key={tab.id}
-                      className="flex items-center relative group"
-                      draggable={false}
-                      onDragOver={(event) => event.preventDefault()}
-                      onDrop={() => onTabDrop(space.id, tab.id)}
-                    >
-                      {editingTab?.spaceId === space.id && editingTab?.tabId === tab.id ? (
-                        <div className="flex-1 flex items-center gap-2 px-2.5 py-1.5 text-[12.5px] rounded-md bg-white/12">
-                          {renderTabIcon(tab)}
-                          <input
-                            autoFocus
-                            className="w-full bg-transparent border-none outline-none text-[#e9e9e9]"
-                            value={editingTab.value}
-                            onChange={(event) => setEditingTab((current) => (current ? { ...current, value: event.target.value } : current))}
-                            onBlur={() => commitTabRename(space.id, tab.id, tab.type)}
-                            onKeyDown={(event) => {
-                              if (event.key === 'Enter') {
-                                commitTabRename(space.id, tab.id, tab.type)
-                              }
-                              if (event.key === 'Escape') {
-                                setEditingTab(null)
-                              }
-                            }}
-                          />
-                        </div>
-                      ) : (
+                  {activeGroupTabs.length >= 2 ? (
+                    <div className="rounded-md bg-white/9 border border-white/10 p-1 grid grid-cols-2 gap-1">
+                      {activeGroupTabs.map((tab) => (
                         <button
-                          className={`flex-1 flex items-center gap-2 px-2.5 py-1.5 text-[12.5px] rounded-md transition-colors text-left truncate ${isActive && space.activeTabId === tab.id ? 'text-[#e9e9e9] bg-white/12' : 'text-[#9a9a9a] hover:text-[#d7d7d7] hover:bg-white/8'}`}
+                          key={tab.id}
+                          className="h-7 rounded-[7px] px-1.5 text-[11px] flex items-center gap-1.5 truncate bg-white/6 text-[#b9b9b9]"
+                          onClick={() => {
+                            onActivateSpace(space.id)
+                            onSelectTab(space.id, activeSpaceTab.id)
+                          }}
                           onMouseDown={(event) => {
                             if (event.button === 1) {
                               event.preventDefault()
@@ -707,31 +764,176 @@ export function SpaceSidebar({
                               event.stopPropagation()
                             }
                           }}
-                          onClick={() => {
-                            onActivateSpace(space.id)
-                            onSelectTab(space.id, tab.id)
-                          }}
-                          onDoubleClick={() => {
-                            if (isActive && space.activeTabId === tab.id) {
-                              setEditingTab({ spaceId: space.id, tabId: tab.id, value: tab.title })
-                            }
+                          draggable
+                          onDragStart={(event) => setTabDragData(event, space.id, tab.id, { requireAlt: true })}
+                          onDragEnd={() => {
+                            setDragTabPayload(null)
+                            window.dispatchEvent(new Event('opensmith:tab-drag-end'))
                           }}
                         >
-                          {renderTabIcon(tab)}
+                          <span className="shrink-0">{renderTabIcon(tab)}</span>
                           <span className="truncate">{tab.title}</span>
                         </button>
-                      )}
-
-                      <button
-                        className="absolute right-1 p-1 rounded-md opacity-0 group-hover:opacity-100 hover:bg-white/12 text-[#9a9a9a] hover:text-white transition-all cursor-pointer"
-                        onClick={() => onCloseTab(space.id, tab.id)}
-                      >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M18 6L6 18M6 6l12 12" />
-                        </svg>
-                      </button>
+                      ))}
                     </div>
-                  ))}
+                  ) : (
+                    <button
+                      className="flex items-center gap-2 px-2.5 py-1.5 text-[12.5px] rounded-md text-[#d7d7d7] bg-white/8 text-left truncate"
+                      onMouseDown={(event) => {
+                        if (event.button === 1) {
+                          event.preventDefault()
+                          event.stopPropagation()
+                          onCloseTab(space.id, activeSpaceTab.id)
+                        }
+                      }}
+                      onAuxClick={(event) => {
+                        if (event.button === 1) {
+                          event.preventDefault()
+                          event.stopPropagation()
+                        }
+                      }}
+                      onClick={() => {
+                        onActivateSpace(space.id)
+                        onSelectTab(space.id, activeSpaceTab.id)
+                      }}
+                    >
+                      {renderTabIcon(activeSpaceTab)}
+                      <span className="truncate">{activeSpaceTab.title}</span>
+                    </button>
+                  )}
+                </div>
+              ) : null}
+
+              {!isCollapsed ? (
+                <div className="flex flex-col gap-0.5 mt-1 mb-2 ml-4 pl-3 border-l border-white/12">
+                  {entries.map((entry) => {
+                    if (entry.type === 'group') {
+                      const isGroupActive = isActive && entry.tabs.some((tab) => tab.id === space.activeTabId)
+                      const selectedGroupTabId = isGroupActive ? space.activeTabId : entry.tabs[0]?.id
+                      const gridCols = entry.tabs.length >= 4 ? 'grid-cols-2' : entry.tabs.length === 3 ? 'grid-cols-3' : 'grid-cols-2'
+
+                      return (
+                        <div key={entry.groupId} className={`group relative rounded-xl border transition-all ${isGroupActive ? 'border-white/16 bg-white/8' : 'border-white/8 bg-white/4 hover:bg-white/8 hover:border-white/14'}`}>
+                          <div className={`grid ${gridCols} gap-1 p-1`}>
+                            {entry.tabs.slice(0, 4).map((tab) => (
+                              <button
+                                key={tab.id}
+                                className={`h-8 rounded-[8px] px-1.5 text-[11px] flex items-center gap-1.5 truncate transition-colors ${isGroupActive ? 'bg-white/12 text-[#f1f1f1]' : 'bg-white/6 text-[#a9a9a9] hover:text-[#dadada]'}`}
+                                onClick={(event) => {
+                                  if (event.altKey) {
+                                    return
+                                  }
+                                  onActivateSpace(space.id)
+                                  if (selectedGroupTabId) {
+                                    onSelectTab(space.id, selectedGroupTabId)
+                                  }
+                                }}
+                                onMouseDown={(event) => {
+                                  if (event.button === 1) {
+                                    event.preventDefault()
+                                    event.stopPropagation()
+                                    onCloseTab(space.id, tab.id)
+                                  }
+                                }}
+                                onAuxClick={(event) => {
+                                  if (event.button === 1) {
+                                    event.preventDefault()
+                                    event.stopPropagation()
+                                  }
+                                }}
+                                draggable
+                                onDragStart={(event) => setTabDragData(event, space.id, tab.id, { requireAlt: true })}
+                                onDragEnd={() => {
+                                  setDragTabPayload(null)
+                                  window.dispatchEvent(new Event('opensmith:tab-drag-end'))
+                                }}
+                                onDragOver={(event) => event.preventDefault()}
+                                onDrop={() => onTabDrop(space.id, tab.id)}
+                              >
+                                <span className="shrink-0">{renderTabIcon(tab)}</span>
+                                <span className="truncate">{tab.title}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )
+                    }
+
+                    const tab = entry.tab
+                    return (
+                      <div
+                        key={tab.id}
+                        className="flex items-center relative group"
+                        onDragOver={(event) => event.preventDefault()}
+                        onDrop={() => onTabDrop(space.id, tab.id)}
+                      >
+                        {editingTab?.spaceId === space.id && editingTab?.tabId === tab.id ? (
+                          <div className="flex-1 flex items-center gap-2 px-2.5 py-1.5 text-[12.5px] rounded-md bg-white/12">
+                            {renderTabIcon(tab)}
+                            <input
+                              autoFocus
+                              className="w-full bg-transparent border-none outline-none text-[#e9e9e9]"
+                              value={editingTab.value}
+                              onChange={(event) => setEditingTab((current) => (current ? { ...current, value: event.target.value } : current))}
+                              onBlur={() => commitTabRename(space.id, tab.id, tab.type)}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter') {
+                                  commitTabRename(space.id, tab.id, tab.type)
+                                }
+                                if (event.key === 'Escape') {
+                                  setEditingTab(null)
+                                }
+                              }}
+                            />
+                          </div>
+                        ) : (
+                          <button
+                            className={`flex-1 flex items-center gap-2 px-2.5 py-1.5 text-[12.5px] rounded-md transition-colors text-left truncate ${isActive && space.activeTabId === tab.id ? 'text-[#e9e9e9] bg-white/12' : 'text-[#9a9a9a] hover:text-[#d7d7d7] hover:bg-white/8'}`}
+                            draggable
+                            onDragStart={(event) => setTabDragData(event, space.id, tab.id)}
+                            onDragEnd={() => {
+                              setDragTabPayload(null)
+                              window.dispatchEvent(new Event('opensmith:tab-drag-end'))
+                            }}
+                            onMouseDown={(event) => {
+                              if (event.button === 1) {
+                                event.preventDefault()
+                                event.stopPropagation()
+                                onCloseTab(space.id, tab.id)
+                              }
+                            }}
+                            onAuxClick={(event) => {
+                              if (event.button === 1) {
+                                event.preventDefault()
+                                event.stopPropagation()
+                              }
+                            }}
+                            onClick={() => {
+                              onActivateSpace(space.id)
+                              onSelectTab(space.id, tab.id)
+                            }}
+                            onDoubleClick={() => {
+                              if (isActive && space.activeTabId === tab.id) {
+                                setEditingTab({ spaceId: space.id, tabId: tab.id, value: tab.title })
+                              }
+                            }}
+                          >
+                            {renderTabIcon(tab)}
+                            <span className="truncate">{tab.title}</span>
+                          </button>
+                        )}
+
+                        <button
+                          className="absolute right-1 p-1 rounded-md opacity-0 group-hover:opacity-100 hover:bg-white/12 text-[#9a9a9a] hover:text-white transition-all cursor-pointer"
+                          onClick={() => onCloseTab(space.id, tab.id)}
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M18 6L6 18M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                    )
+                  })}
 
                   <div className="flex flex-col gap-1 mt-1.5 px-1">
                     <div className="text-[11px] text-[#7b7b7b] px-2">New Tab</div>

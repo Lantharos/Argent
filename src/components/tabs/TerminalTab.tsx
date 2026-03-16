@@ -51,9 +51,26 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
   const sessionIdRef = useRef<string | null>(tab.sessionId ?? null)
   const creatingSessionRef = useRef(false)
   const sessionReplayModeRef = useRef<Record<string, 'reuse' | 'new'>>({})
+  const attachedSessionIdRef = useRef<string | null>(null)
   const latestTabRef = useRef<TerminalTabData>(tab)
+  const onChangeRef = useRef(onChange)
   const pendingHistoryRef = useRef('')
   const historyFlushTimerRef = useRef<number | null>(null)
+
+  const safeFit = useCallback(() => {
+    const terminal = termRef.current
+    const fitAddon = fitRef.current
+    if (!terminal || !fitAddon || !terminal.element) {
+      return false
+    }
+
+    try {
+      fitAddon.fit()
+      return true
+    } catch {
+      return false
+    }
+  }, [])
 
   const flushHistory = useCallback(() => {
     if (!pendingHistoryRef.current) {
@@ -70,9 +87,9 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
     }
 
     if (nextHistory !== base) {
-      onChange({ ...current, history: nextHistory })
+      onChangeRef.current({ ...current, history: nextHistory })
     }
-  }, [onChange])
+  }, [])
 
   const queueHistory = useCallback((chunk: string) => {
     pendingHistoryRef.current += chunk
@@ -88,8 +105,9 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
 
   useEffect(() => {
     latestTabRef.current = tab
+    onChangeRef.current = onChange
     sessionIdRef.current = tab.sessionId ?? null
-  }, [tab])
+  }, [onChange, tab])
 
   useEffect(() => {
     const terminal = new Terminal({
@@ -108,14 +126,17 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
 
     if (containerRef.current) {
       terminal.open(containerRef.current)
-      fitAddon.fit()
+      safeFit()
     }
 
     termRef.current = terminal
     fitRef.current = fitAddon
 
     const resizeObserver = new ResizeObserver(() => {
-      fitAddon.fit()
+      if (!safeFit()) {
+        return
+      }
+
       const sessionId = sessionIdRef.current
       if (sessionId) {
         void window.opensmith.terminal.resize(sessionId, terminal.cols, terminal.rows)
@@ -135,9 +156,11 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
       flushHistory()
       inputDisposeRef.current?.dispose()
       inputDisposeRef.current = null
+      fitRef.current = null
+      termRef.current = null
       terminal.dispose()
     }
-  }, [flushHistory])
+  }, [flushHistory, safeFit])
 
   useEffect(() => {
     if (creatingSessionRef.current) {
@@ -161,7 +184,7 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
         const created = await window.opensmith.terminal.create(tab.cwd)
         sessionReplayModeRef.current[created.id] = 'new'
         if (!cancelled) {
-          onChange({ ...latestTabRef.current, sessionId: created.id })
+          onChangeRef.current({ ...latestTabRef.current, sessionId: created.id })
         }
       } finally {
         creatingSessionRef.current = false
@@ -171,7 +194,7 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
     return () => {
       cancelled = true
     }
-  }, [onChange, tab.sessionId, tab.cwd])
+  }, [tab.sessionId, tab.cwd])
 
   useEffect(() => {
     if (!tab.sessionId) {
@@ -179,6 +202,11 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
     }
 
     const sessionId = tab.sessionId
+    if (attachedSessionIdRef.current === sessionId) {
+      return
+    }
+    attachedSessionIdRef.current = sessionId
+
     const replayMode = sessionReplayModeRef.current[sessionId] ?? 'reuse'
 
     const terminal = termRef.current
@@ -195,20 +223,31 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
 
     let hasReceivedOutput = false
     let promptTimer: number | null = null
+    let fitTimer: number | null = null
 
     const unsubData = window.opensmith.terminal.onData((payload) => {
+      const current = termRef.current
+      if (!current) {
+        return
+      }
+
       if (payload.id === sessionId) {
         hasReceivedOutput = true
         const sanitizedData = sanitizeTerminalChunk(payload.data)
-        terminal.write(sanitizedData)
+        current.write(sanitizedData)
         queueHistory(sanitizedData)
       }
     })
 
     const unsubExit = window.opensmith.terminal.onExit((payload) => {
+      const current = termRef.current
+      if (!current) {
+        return
+      }
+
       if (payload.id === sessionId) {
         const line = `\r\n[process exited: ${payload.code}]\r\n`
-        terminal.write(line)
+        current.write(line)
         queueHistory(line)
       }
     })
@@ -226,8 +265,11 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
       }, 320)
     }
 
-    window.setTimeout(() => {
-      fitRef.current?.fit()
+    fitTimer = window.setTimeout(() => {
+      if (!safeFit()) {
+        return
+      }
+
       const current = termRef.current
       if (current) {
         void window.opensmith.terminal.resize(sessionId, current.cols, current.rows)
@@ -238,21 +280,30 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
       if (promptTimer) {
         window.clearTimeout(promptTimer)
       }
+      if (fitTimer) {
+        window.clearTimeout(fitTimer)
+      }
       unsubData()
       unsubExit()
       flushHistory()
       inputDisposeRef.current?.dispose()
       inputDisposeRef.current = null
+      if (attachedSessionIdRef.current === sessionId) {
+        attachedSessionIdRef.current = null
+      }
     }
-  }, [flushHistory, queueHistory, tab.history, tab.sessionId])
+  }, [flushHistory, queueHistory, safeFit, tab.history, tab.sessionId])
 
   useEffect(() => {
     if (!isActive) {
       return
     }
 
-    window.setTimeout(() => {
-      fitRef.current?.fit()
+    const timerId = window.setTimeout(() => {
+      if (!safeFit()) {
+        return
+      }
+
       const sessionId = sessionIdRef.current
       const current = termRef.current
       if (sessionId && current) {
@@ -260,7 +311,11 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
       }
       termRef.current?.focus()
     }, 30)
-  }, [isActive])
+
+    return () => {
+      window.clearTimeout(timerId)
+    }
+  }, [isActive, safeFit])
 
   return (
     <section className="tab-pane terminal-tab">

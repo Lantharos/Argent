@@ -149,6 +149,22 @@ function App() {
     return reply.content
   }
 
+  function splitTab(spaceId: string, sourceTabId: string, targetTabId: string, direction: 'left' | 'right' | 'top' | 'bottom') {
+    dispatch({
+      type: 'split-tab',
+      spaceId,
+      sourceTabId,
+      targetTabId,
+      direction,
+    })
+    dispatch({ type: 'set-active-space', spaceId })
+  }
+
+  function selectWorkspaceTab(spaceId: string, tabId: string) {
+    dispatch({ type: 'set-active-space', spaceId })
+    dispatch({ type: 'set-active-tab', spaceId, tabId })
+  }
+
   if (!loaded) {
     return (
       <div className="grid min-h-screen place-items-center bg-transparent">
@@ -220,6 +236,8 @@ function App() {
           onUpdateTab={updateTab}
           onOpenEditorFileInNewTab={openEditorFileInNewTab}
           onSendAI={sendAI}
+          onSplitTab={splitTab}
+          onSelectWorkspaceTab={selectWorkspaceTab}
         />
       ) : (
         <div className="workspace">

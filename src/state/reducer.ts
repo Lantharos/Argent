@@ -1,4 +1,5 @@
-import type { AppSnapshot, AppSpace, AppTab, AppTabType } from '../types/opensmith'
+import type { AppSnapshot, AppSpace, AppTab, AppTabGroup, AppTabSplitNode, AppTabType, SplitOrientation } from '../types/opensmith'
+import { createId } from './ids'
 import { createTab } from './tabFactory'
 
 type Action =
@@ -11,6 +12,13 @@ type Action =
   | { type: 'insert-tab-after'; spaceId: string; afterTabId: string; tab: AppTab; activate?: boolean }
   | { type: 'set-active-tab'; spaceId: string; tabId: string }
   | { type: 'reorder-tab'; spaceId: string; sourceTabId: string; targetTabId: string }
+  | {
+      type: 'split-tab'
+      spaceId: string
+      sourceTabId: string
+      targetTabId: string
+      direction: 'left' | 'right' | 'top' | 'bottom'
+    }
   | { type: 'set-secondary-tab'; spaceId: string; tabId: string | null }
   | { type: 'update-tab'; spaceId: string; tabId: string; updater: (tab: AppTab) => AppTab }
   | { type: 'close-tab'; spaceId: string; tabId: string }
@@ -32,6 +40,216 @@ function removeFromHistory(history: string[] | undefined, tabId: string): string
   return (history ?? []).filter((id) => id !== tabId)
 }
 
+function collectSplitTabIds(node: AppTabSplitNode, out: Set<string>) {
+  if (node.type === 'leaf') {
+    out.add(node.tabId)
+    return
+  }
+
+  collectSplitTabIds(node.first, out)
+  collectSplitTabIds(node.second, out)
+}
+
+function countSplitLeaves(node: AppTabSplitNode): number {
+  const ids = new Set<string>()
+  collectSplitTabIds(node, ids)
+  return ids.size
+}
+
+function normalizeSplitNode(node: AppTabSplitNode, tabIds: Set<string>, used: Set<string>): AppTabSplitNode | null {
+  if (node.type === 'leaf') {
+    if (!tabIds.has(node.tabId) || used.has(node.tabId)) {
+      return null
+    }
+    used.add(node.tabId)
+    return node
+  }
+
+  const first = normalizeSplitNode(node.first, tabIds, used)
+  const second = normalizeSplitNode(node.second, tabIds, used)
+
+  if (!first && !second) {
+    return null
+  }
+  if (!first) {
+    return second
+  }
+  if (!second) {
+    return first
+  }
+
+  return {
+    ...node,
+    first,
+    second,
+  }
+}
+
+function normalizeTabGroups(space: AppSpace): AppTabGroup[] {
+  const tabIds = new Set(space.tabs.map((tab) => tab.id))
+  const used = new Set<string>()
+  const nextGroups: AppTabGroup[] = []
+
+  for (const group of space.tabGroups ?? []) {
+    const root = normalizeSplitNode(group.root, tabIds, used)
+    if (!root) {
+      continue
+    }
+    if (countSplitLeaves(root) < 2) {
+      continue
+    }
+    nextGroups.push({ ...group, root })
+  }
+
+  return nextGroups
+}
+
+function splitNodeContainsTab(node: AppTabSplitNode, tabId: string): boolean {
+  if (node.type === 'leaf') {
+    return node.tabId === tabId
+  }
+
+  return splitNodeContainsTab(node.first, tabId) || splitNodeContainsTab(node.second, tabId)
+}
+
+function removeTabFromSplitNode(node: AppTabSplitNode, tabId: string): { node: AppTabSplitNode | null; removed: boolean } {
+  if (node.type === 'leaf') {
+    if (node.tabId !== tabId) {
+      return { node, removed: false }
+    }
+    return { node: null, removed: true }
+  }
+
+  const nextFirst = removeTabFromSplitNode(node.first, tabId)
+  if (nextFirst.removed) {
+    if (!nextFirst.node) {
+      return { node: node.second, removed: true }
+    }
+    return {
+      node: {
+        ...node,
+        first: nextFirst.node,
+      },
+      removed: true,
+    }
+  }
+
+  const nextSecond = removeTabFromSplitNode(node.second, tabId)
+  if (!nextSecond.removed) {
+    return { node, removed: false }
+  }
+
+  if (!nextSecond.node) {
+    return { node: node.first, removed: true }
+  }
+
+  return {
+    node: {
+      ...node,
+      second: nextSecond.node,
+    },
+    removed: true,
+  }
+}
+
+function insertTabAroundTarget(
+  node: AppTabSplitNode,
+  targetTabId: string,
+  sourceTabId: string,
+  orientation: SplitOrientation,
+  place: 'before' | 'after',
+): { node: AppTabSplitNode; inserted: boolean } {
+  if (node.type === 'leaf') {
+    if (node.tabId !== targetTabId) {
+      return { node, inserted: false }
+    }
+
+    const sourceLeaf: AppTabSplitNode = {
+      id: createId('split-leaf'),
+      type: 'leaf',
+      tabId: sourceTabId,
+    }
+
+    return {
+      node: {
+        id: createId('split-branch'),
+        type: 'split',
+        orientation,
+        first: place === 'before' ? sourceLeaf : node,
+        second: place === 'before' ? node : sourceLeaf,
+      },
+      inserted: true,
+    }
+  }
+
+  const nextFirst = insertTabAroundTarget(node.first, targetTabId, sourceTabId, orientation, place)
+  if (nextFirst.inserted) {
+    return {
+      node: {
+        ...node,
+        first: nextFirst.node,
+      },
+      inserted: true,
+    }
+  }
+
+  const nextSecond = insertTabAroundTarget(node.second, targetTabId, sourceTabId, orientation, place)
+  if (!nextSecond.inserted) {
+    return { node, inserted: false }
+  }
+
+  return {
+    node: {
+      ...node,
+      second: nextSecond.node,
+    },
+    inserted: true,
+  }
+}
+
+function detachTabFromGroups(groups: AppTabGroup[], tabId: string): AppTabGroup[] {
+  const nextGroups: AppTabGroup[] = []
+
+  for (const group of groups) {
+    const next = removeTabFromSplitNode(group.root, tabId)
+    if (!next.removed || !next.node) {
+      if (countSplitLeaves(group.root) >= 2) {
+        nextGroups.push(group)
+      }
+      continue
+    }
+
+    if (countSplitLeaves(next.node) >= 2) {
+      nextGroups.push({
+        ...group,
+        root: next.node,
+      })
+    }
+  }
+
+  return nextGroups
+}
+
+function findGroupIndexByTab(groups: AppTabGroup[], tabId: string): number {
+  return groups.findIndex((group) => splitNodeContainsTab(group.root, tabId))
+}
+
+function splitDirectionToPlacement(direction: 'left' | 'right' | 'top' | 'bottom'): {
+  orientation: SplitOrientation
+  place: 'before' | 'after'
+} {
+  if (direction === 'left') {
+    return { orientation: 'vertical', place: 'before' }
+  }
+  if (direction === 'right') {
+    return { orientation: 'vertical', place: 'after' }
+  }
+  if (direction === 'top') {
+    return { orientation: 'horizontal', place: 'before' }
+  }
+  return { orientation: 'horizontal', place: 'after' }
+}
+
 function normalizeSpace(space: AppSpace): AppSpace {
   const normalizedKind = space.kind ?? 'project'
   const normalizedTabs =
@@ -47,6 +265,10 @@ function normalizeSpace(space: AppSpace): AppSpace {
     kind: normalizedKind,
     tabs: normalizedTabs,
     activeTabId: activeFallback,
+    tabGroups: normalizeTabGroups({
+      ...space,
+      tabs: normalizedTabs,
+    }),
     tabHistory: activeFallback ? recordTabVisit(historyFromState, activeFallback) : historyFromState,
   }
 }
@@ -204,6 +426,71 @@ export function appReducer(state: AppSnapshot, action: Action): AppSnapshot {
     })
   }
 
+  if (action.type === 'split-tab') {
+    return updateSpace(state, action.spaceId, (space) => {
+      if (action.sourceTabId === action.targetTabId) {
+        return space
+      }
+
+      const hasSource = space.tabs.some((tab) => tab.id === action.sourceTabId)
+      const hasTarget = space.tabs.some((tab) => tab.id === action.targetTabId)
+      if (!hasSource || !hasTarget) {
+        return space
+      }
+
+      const { orientation, place } = splitDirectionToPlacement(action.direction)
+      const detachedGroups = detachTabFromGroups(space.tabGroups ?? [], action.sourceTabId)
+      const targetGroupIndex = findGroupIndexByTab(detachedGroups, action.targetTabId)
+      const nextGroups = [...detachedGroups]
+
+      if (targetGroupIndex >= 0) {
+        const targetGroup = nextGroups[targetGroupIndex]
+        const inserted = insertTabAroundTarget(targetGroup.root, action.targetTabId, action.sourceTabId, orientation, place)
+        if (!inserted.inserted) {
+          return space
+        }
+        nextGroups[targetGroupIndex] = {
+          ...targetGroup,
+          root: inserted.node,
+        }
+      } else {
+        const sourceLeaf: AppTabSplitNode = {
+          id: createId('split-leaf'),
+          type: 'leaf',
+          tabId: action.sourceTabId,
+        }
+        const targetLeaf: AppTabSplitNode = {
+          id: createId('split-leaf'),
+          type: 'leaf',
+          tabId: action.targetTabId,
+        }
+
+        nextGroups.push({
+          id: createId('tab-group'),
+          root: {
+            id: createId('split-branch'),
+            type: 'split',
+            orientation,
+            first: place === 'before' ? sourceLeaf : targetLeaf,
+            second: place === 'before' ? targetLeaf : sourceLeaf,
+          },
+        })
+      }
+
+      const normalizedGroups = normalizeTabGroups({
+        ...space,
+        tabGroups: nextGroups,
+      })
+
+      return {
+        ...space,
+        tabGroups: normalizedGroups,
+        activeTabId: action.sourceTabId,
+        tabHistory: recordTabVisit(space.tabHistory, action.sourceTabId),
+      }
+    })
+  }
+
   if (action.type === 'set-secondary-tab') {
     return updateSpace(state, action.spaceId, (space) => ({
       ...space,
@@ -238,6 +525,11 @@ export function appReducer(state: AppSnapshot, action: Action): AppSnapshot {
         tabs: nextTabs,
         activeTabId: nextActiveId,
         secondaryTabId: space.secondaryTabId === action.tabId ? null : space.secondaryTabId,
+        tabGroups: normalizeTabGroups({
+          ...space,
+          tabs: nextTabs,
+          tabGroups: detachTabFromGroups(space.tabGroups ?? [], action.tabId),
+        }),
         tabHistory: nextHistory,
       }
     })
