@@ -240,7 +240,7 @@ function parseCommitPreview(raw: string): ParsedCommitPreview {
   }
 }
 
-export function GitTab({ tab, isActive, onChange: _onChange }: Props) {
+export function GitTab({ tab, isActive }: Props) {
   const [checking, setChecking] = useState(true)
   const [installed, setInstalled] = useState(false)
   const [isRepo, setIsRepo] = useState(true)
@@ -580,7 +580,7 @@ export function GitTab({ tab, isActive, onChange: _onChange }: Props) {
   async function unstageFile(path: string) {
     if (loading || isStagingAll || stagingPath) return
     setStagingPath(path)
-    let res = await window.opensmith.git.exec({ cwd: tab.cwd, args: ['reset', 'HEAD', path] })
+    const res = await window.opensmith.git.exec({ cwd: tab.cwd, args: ['reset', 'HEAD', path] })
     if (!res.success && (res.stderr?.includes("ambiguous argument 'HEAD'") || res.error?.includes("ambiguous argument 'HEAD'"))) {
       await window.opensmith.git.exec({ cwd: tab.cwd, args: ['rm', '--cached', path] })
     }

@@ -1,36 +1,55 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { BrowserTabData } from '../../types/opensmith'
+
+type BrowserWebview = HTMLElement & {
+  getURL: () => string
+  canGoBack: () => boolean
+  canGoForward: () => boolean
+  getTitle: () => string
+  goBack: () => void
+  goForward: () => void
+  reloadIgnoringCache: () => void
+}
+
+type TitleUpdatedEvent = Event & {
+  title?: string
+}
+
+type FaviconUpdatedEvent = Event & {
+  favicons?: string[]
+}
 
 type Props = {
   tab: BrowserTabData
   onChange: (next: BrowserTabData) => void
 }
 
+function isHttpUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value)
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:'
+  } catch {
+    return false
+  }
+}
+
 export function BrowserTab({ tab, onChange }: Props) {
-  const [urlInput, setUrlInput] = useState(tab.url)
+  const [urlInputDraft, setUrlInputDraft] = useState<string | null>(null)
   const [nonce, setNonce] = useState(0)
   const [canGoBack, setCanGoBack] = useState(false)
   const [canGoForward, setCanGoForward] = useState(false)
-  const viewRef = useRef<any>(null)
+  const viewRef = useRef<HTMLElement | null>(null)
   const domReadyRef = useRef(false)
-
-  useEffect(() => {
-    setUrlInput(tab.url)
-  }, [tab.url])
+  const urlInput = urlInputDraft ?? tab.url
 
   const safeUrl = useMemo(() => {
-    try {
-      const parsed = new URL(tab.url)
-      if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
-        return tab.url
-      }
-      return 'https://example.com'
-    } catch {
-      return 'https://example.com'
+    if (isHttpUrl(tab.url)) {
+      return tab.url
     }
+    return 'https://www.google.com'
   }, [tab.url])
 
-  function updateTabPatch(patch: Partial<BrowserTabData>) {
+  const updateTabPatch = useCallback((patch: Partial<BrowserTabData>) => {
     const next: BrowserTabData = { ...tab, ...patch }
     if (
       next.url === tab.url
@@ -40,7 +59,7 @@ export function BrowserTab({ tab, onChange }: Props) {
       return
     }
     onChange(next)
-  }
+  }, [onChange, tab])
 
   function resolveNavigationTarget(rawInput: string): string {
     const value = rawInput.trim()
@@ -77,18 +96,31 @@ export function BrowserTab({ tab, onChange }: Props) {
 
   function commitUrl() {
     const next = resolveNavigationTarget(urlInput)
-    setUrlInput(next)
+    setUrlInputDraft(null)
     updateTabPatch({ url: next })
   }
 
-  function withReadyWebview<T>(action: (webview: any) => T): T | null {
+  function withReadyWebview<T>(action: (webview: BrowserWebview) => T): T | null {
     const webview = viewRef.current
     if (!webview || !domReadyRef.current) {
       return null
     }
 
+    const candidate = webview as Partial<BrowserWebview>
+    if (
+      typeof candidate.getURL !== 'function'
+      || typeof candidate.canGoBack !== 'function'
+      || typeof candidate.canGoForward !== 'function'
+      || typeof candidate.getTitle !== 'function'
+      || typeof candidate.goBack !== 'function'
+      || typeof candidate.goForward !== 'function'
+      || typeof candidate.reloadIgnoringCache !== 'function'
+    ) {
+      return null
+    }
+
     try {
-      return action(webview)
+      return action(candidate as BrowserWebview)
     } catch {
       return null
     }
@@ -102,7 +134,7 @@ export function BrowserTab({ tab, onChange }: Props) {
 
     const syncNavState = () => {
       const nextUrl = withReadyWebview((current) => current.getURL())
-      if (!nextUrl) {
+      if (!nextUrl || !isHttpUrl(nextUrl)) {
         return
       }
 
@@ -112,7 +144,7 @@ export function BrowserTab({ tab, onChange }: Props) {
 
       setCanGoBack(Boolean(back))
       setCanGoForward(Boolean(forward))
-      setUrlInput(nextUrl)
+      setUrlInputDraft(nextUrl)
       const host = (() => {
         try {
           return new URL(nextUrl).hostname.replace(/^www\./, '')
@@ -128,14 +160,14 @@ export function BrowserTab({ tab, onChange }: Props) {
       syncNavState()
     }
 
-    const onTitle = (event: any) => {
+    const onTitle = (event: TitleUpdatedEvent) => {
       const title = (event?.title ?? '').trim()
       if (title) {
         updateTabPatch({ title })
       }
     }
 
-    const onFavicon = (event: any) => {
+    const onFavicon = (event: FaviconUpdatedEvent) => {
       const favicon = event?.favicons?.[0] ?? null
       updateTabPatch({ faviconUrl: favicon })
     }
@@ -155,13 +187,7 @@ export function BrowserTab({ tab, onChange }: Props) {
       webview.removeEventListener('page-favicon-updated', onFavicon)
       webview.removeEventListener('dom-ready', onDomReady)
     }
-  }, [nonce, safeUrl])
-
-  useEffect(() => {
-    domReadyRef.current = false
-    setCanGoBack(false)
-    setCanGoForward(false)
-  }, [nonce, safeUrl])
+  }, [nonce, safeUrl, updateTabPatch])
 
   return (
     <section className="tab-pane browser-tab relative">
@@ -225,7 +251,7 @@ export function BrowserTab({ tab, onChange }: Props) {
             <input
               className="bg-transparent border-0 outline-none h-full px-0 rounded-none text-[12px] text-[#e5e5e5] placeholder:text-[#7f7f7f] w-full"
               value={urlInput}
-              onChange={(event) => setUrlInput(event.target.value)}
+              onChange={(event) => setUrlInputDraft(event.target.value)}
               onBlur={commitUrl}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') {
@@ -246,6 +272,7 @@ export function BrowserTab({ tab, onChange }: Props) {
           key={`${tab.id}-${nonce}`}
           ref={(node) => {
             viewRef.current = node
+            domReadyRef.current = false
           }}
           src={safeUrl}
           partition="persist:opensmith-browser"

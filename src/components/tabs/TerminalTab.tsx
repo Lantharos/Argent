@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { Terminal } from 'xterm'
 import { FitAddon } from 'xterm-addon-fit'
 import 'xterm/css/xterm.css'
@@ -12,6 +12,7 @@ type Props = {
 
 const TERMINAL_HISTORY_LIMIT = 300_000
 const HISTORY_FLUSH_MS = 120
+const BACKSPACE_CHAR = String.fromCharCode(8)
 
 function trimTrailingPowerShellPrompt(value: string): string {
   return value.replace(/(?:\r?\n)?PS [^\r\n>]+>\s*$/m, '')
@@ -39,7 +40,7 @@ function sanitizeReplayChunk(value: string): string {
     return value
   }
 
-  return value.replace(/[\x7f\x08]/g, '')
+  return value.replace(/\x7f/g, '').split(BACKSPACE_CHAR).join('')
 }
 
 export function TerminalTab({ tab, isActive, onChange }: Props) {
@@ -54,7 +55,7 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
   const pendingHistoryRef = useRef('')
   const historyFlushTimerRef = useRef<number | null>(null)
 
-  function flushHistory() {
+  const flushHistory = useCallback(() => {
     if (!pendingHistoryRef.current) {
       return
     }
@@ -71,9 +72,9 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
     if (nextHistory !== base) {
       onChange({ ...current, history: nextHistory })
     }
-  }
+  }, [onChange])
 
-  function queueHistory(chunk: string) {
+  const queueHistory = useCallback((chunk: string) => {
     pendingHistoryRef.current += chunk
     if (historyFlushTimerRef.current) {
       return
@@ -83,7 +84,7 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
       historyFlushTimerRef.current = null
       flushHistory()
     }, HISTORY_FLUSH_MS)
-  }
+  }, [flushHistory])
 
   useEffect(() => {
     latestTabRef.current = tab
@@ -136,7 +137,7 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
       inputDisposeRef.current = null
       terminal.dispose()
     }
-  }, [])
+  }, [flushHistory])
 
   useEffect(() => {
     if (creatingSessionRef.current) {
@@ -160,7 +161,7 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
         const created = await window.opensmith.terminal.create(tab.cwd)
         sessionReplayModeRef.current[created.id] = 'new'
         if (!cancelled) {
-          onChange({ ...tab, sessionId: created.id })
+          onChange({ ...latestTabRef.current, sessionId: created.id })
         }
       } finally {
         creatingSessionRef.current = false
@@ -243,7 +244,7 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
       inputDisposeRef.current?.dispose()
       inputDisposeRef.current = null
     }
-  }, [tab.sessionId])
+  }, [flushHistory, queueHistory, tab.history, tab.sessionId])
 
   useEffect(() => {
     if (!isActive) {

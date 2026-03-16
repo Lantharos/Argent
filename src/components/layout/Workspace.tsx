@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { AppSpace, AppTab, ProviderConfig } from '../../types/opensmith'
 import { TabRenderer } from '../../tabs/TabRenderer'
 
@@ -76,14 +76,10 @@ export function Workspace({
   const titlebarVisibleRef = useRef(false)
   const tabLastSeenRef = useRef<Record<string, number>>({})
 
-  if (!activeTab) {
-    return null
-  }
-
   const currentTab = activeTab
-  const isBrowserTab = currentTab.type === 'browser'
+  const isBrowserTab = currentTab?.type === 'browser'
 
-  function shouldKeepTabMounted(tab: AppTab) {
+  const shouldKeepTabMounted = useCallback((tab: AppTab) => {
     if (tab.type === 'ai') {
       return Boolean(tab.isGenerating)
     }
@@ -91,9 +87,13 @@ export function Workspace({
       return Boolean(tab.sessionId)
     }
     return false
-  }
+  }, [])
 
-  function pruneHotTabs(source: string[], now: number): string[] {
+  const pruneHotTabs = useCallback((source: string[], now: number): string[] => {
+    if (!currentTab) {
+      return []
+    }
+
     const openTabIds = new Set(space.tabs.map((tab) => tab.id))
 
     const filtered = source.filter((id) => openTabIds.has(id))
@@ -155,30 +155,55 @@ export function Workspace({
     }
 
     return snoozed
-  }
+  }, [currentTab, shouldKeepTabMounted, space.tabs])
 
   useEffect(() => {
+    if (!currentTab) {
+      const frame = window.requestAnimationFrame(() => {
+        setHotTabIds((current) => (current.length === 0 ? current : []))
+      })
+      return () => window.cancelAnimationFrame(frame)
+    }
+
     const now = Date.now()
     tabLastSeenRef.current[currentTab.id] = now
-    setHotTabIds((current) => pruneHotTabs(current, now))
-  }, [currentTab.id, space.tabs])
+    const frame = window.requestAnimationFrame(() => {
+      setHotTabIds((current) => pruneHotTabs(current, now))
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [currentTab, pruneHotTabs])
 
   useEffect(() => {
+    if (!currentTab) {
+      return
+    }
+
     const now = Date.now()
     tabLastSeenRef.current = { [currentTab.id]: now }
     const pinnedTabIds = space.tabs.filter((tab) => shouldKeepTabMounted(tab)).map((tab) => tab.id)
-    setHotTabIds(Array.from(new Set([currentTab.id, ...pinnedTabIds])))
-  }, [space.id])
+    const frame = window.requestAnimationFrame(() => {
+      setHotTabIds(() => Array.from(new Set([currentTab.id, ...pinnedTabIds])))
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [currentTab, shouldKeepTabMounted, space.id, space.tabs])
 
   useEffect(() => {
+    if (!currentTab) {
+      return
+    }
+
     const intervalId = window.setInterval(() => {
       setHotTabIds((current) => pruneHotTabs(current, Date.now()))
     }, CACHE_CLEANUP_MS)
 
     return () => window.clearInterval(intervalId)
-  }, [currentTab.id, space.tabs])
+  }, [currentTab, pruneHotTabs])
 
   useEffect(() => {
+    if (!currentTab) {
+      return
+    }
+
     const setTitlebar = (nextVisible: boolean) => {
       if (titlebarVisibleRef.current === nextVisible) {
         return
@@ -210,7 +235,7 @@ export function Workspace({
       window.removeEventListener('mousemove', onMouseMove)
       window.removeEventListener('mouseleave', onMouseLeave)
     }
-  }, [currentTab.type])
+  }, [currentTab])
 
   useEffect(() => {
     titlebarVisibleRef.current = titlebarVisible
@@ -222,6 +247,10 @@ export function Workspace({
       void window.opensmith.window.setNativeControlsVisible(false)
     }
   }, [])
+
+  if (!currentTab) {
+    return null
+  }
 
   const hotTabs = hotTabIds
     .map((id) => space.tabs.find((tab) => tab.id === id))
