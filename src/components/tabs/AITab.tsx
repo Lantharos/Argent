@@ -11,7 +11,6 @@ import {
   SendHorizontal,
   Square,
   TerminalSquare,
-  TriangleAlert,
   Plus,
   Loader2,
 } from 'lucide-react'
@@ -36,12 +35,20 @@ type Props = {
 }
 
 type ModelOption = { id: string; label: string; contextWindow?: number | null }
+type CommandOption = { name: string; description?: string }
+type ModeOption = { id: string; name: string; description?: string }
 
 const EFFORT_ORDER = ['base', 'thinking', 'low', 'medium', 'high', 'xhigh'] as const
 const MODEL_CACHE_TTL_MS = 5 * 60 * 1000
 const sharedModelOptionsCache: Record<string, ModelOption[]> = {}
 const sharedModelOptionsFetchedAt: Record<string, number> = {}
 const sharedModelOptionsInflight = new Map<string, Promise<ModelOption[]>>()
+const sharedCommandOptionsCache: Record<string, CommandOption[]> = {}
+const sharedCommandOptionsInflight = new Map<string, Promise<CommandOption[]>>()
+
+function getCommandInflightKey(providerId: string, cwd: string, sessionId?: string | null) {
+  return `${providerId}::${cwd || ''}::${sessionId || ''}`
+}
 
 type EffortLevel = (typeof EFFORT_ORDER)[number]
 
@@ -273,13 +280,32 @@ function summarizeTabTitleFromPrompt(input: string) {
   return base || 'AI Chat'
 }
 
+function displayModeName(mode: ModeOption) {
+  const id = mode.id.toLowerCase()
+  if (id === 'build') return 'Agent'
+  if (id === 'plan') return 'Plan'
+  return mode.name || mode.id
+}
+
+function displayModeId(modeId: string | null | undefined) {
+  const id = (modeId || '').trim().toLowerCase()
+  if (!id) return 'Mode'
+  if (id === 'build') return 'Agent'
+  if (id === 'plan') return 'Plan'
+  return id[0].toUpperCase() + id.slice(1)
+}
+
 export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, providers, onChange, onSend }: Props) {
   const [loading, setLoading] = useState(false)
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
   const [activeMetaPopover, setActiveMetaPopover] = useState<'local' | 'access' | 'context' | null>(null)
   const modelMenuRef = useRef<HTMLDivElement | null>(null)
+  const modeMenuRef = useRef<HTMLDivElement | null>(null)
 
   const [modelOptions, setModelOptions] = useState<ModelOption[]>([])
+  const [modeOptions, setModeOptions] = useState<ModeOption[]>([])
+  const [commandOptions, setCommandOptions] = useState<CommandOption[]>([])
+  const [commandMenuIndex, setCommandMenuIndex] = useState(0)
   const modelLoadTokenRef = useRef(0)
   const [modelFilter, setModelFilter] = useState('')
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
@@ -289,6 +315,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
   const toolMessageIndexByIdRef = useRef<Record<string, number>>({})
   const pendingAssistantTextRef = useRef('')
   const flushTimerRef = useRef<number | null>(null)
+  const activeAssistantMessageIndexRef = useRef<number | null>(null)
   const tabRef = useRef(tab)
   const onChangeRef = useRef(onChange)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -314,6 +341,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
 
   const opencodeInstalled = Boolean(selectedProvider)
   const selectedModelValue = tab.model || selectedProvider?.model || null
+  const selectedModeId = tab.acpModeId || null
 
   const selectedModelLabel = useMemo(() => {
     const selectedOption = modelOptions.find((item) => item.id === selectedModelValue)
@@ -335,6 +363,15 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
   const selectedModelMeta = useMemo(() => {
     return extractModelMeta(selectedModelLabel, selectedModelValue, selectedProvider?.id || tab.providerId || null)
   }, [selectedModelLabel, selectedModelValue, selectedProvider, tab.providerId])
+
+  const selectedModeOption = useMemo(() => {
+    if (!selectedModeId) {
+      return null
+    }
+    return modeOptions.find((mode) => mode.id === selectedModeId) || null
+  }, [modeOptions, selectedModeId])
+
+  const modeLabel = selectedModeOption ? displayModeName(selectedModeOption) : displayModeId(selectedModeId)
 
   const groupedModelFamilies = useMemo(() => {
     const query = modelFilter.trim().toLowerCase()
@@ -438,6 +475,47 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
   }, [tab.messages, tab.input])
 
   const usedTokens = selectedModelUsage?.usedTokens ?? estimatedTokens
+  const slashInputState = useMemo(() => {
+    const lines = tab.input.split('\n')
+    const firstLine = lines[0] ?? ''
+    if (!firstLine.startsWith('/')) {
+      return {
+        active: false,
+        query: '',
+      }
+    }
+
+    const commandSegment = firstLine.slice(1)
+    const whitespaceIndex = commandSegment.search(/\s/)
+    const token = (whitespaceIndex >= 0 ? commandSegment.slice(0, whitespaceIndex) : commandSegment).trim()
+    return {
+      active: true,
+      query: token.toLowerCase(),
+    }
+  }, [tab.input])
+
+  const slashCommandSuggestions = useMemo(() => {
+    if (!slashInputState.active) {
+      return []
+    }
+
+    const query = slashInputState.query
+    const options = query
+      ? commandOptions.filter((item) => item.name.toLowerCase().includes(query))
+      : commandOptions
+
+    return options.slice(0, 8)
+  }, [commandOptions, slashInputState])
+
+  const slashCommandMenuOpen = slashInputState.active && slashCommandSuggestions.length > 0
+
+  useEffect(() => {
+    if (!slashCommandMenuOpen) {
+      setCommandMenuIndex(0)
+      return
+    }
+    setCommandMenuIndex((prev) => Math.max(0, Math.min(prev, slashCommandSuggestions.length - 1)))
+  }, [slashCommandMenuOpen, slashCommandSuggestions.length])
 
   const assistantModelLabel = useMemo(() => {
     const label = selectedModelLabel || selectedModelValue || selectedProvider?.model || 'Model'
@@ -523,12 +601,14 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
         (last.content.startsWith('[[tool]]') || last.content.startsWith('[[thought]]'))
 
       if (last && last.role === 'assistant' && !isMetaLine) {
+        activeAssistantMessageIndexRef.current = messages.length - 1
         messages[messages.length - 1] = {
           ...last,
           content: `${last.content}${delta}`,
         }
       } else {
         messages.push({ role: 'assistant', content: delta })
+        activeAssistantMessageIndexRef.current = messages.length - 1
       }
 
       return {
@@ -637,6 +717,15 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
         return
       }
 
+      if (event.type === 'commands') {
+        const next = Array.isArray(event.commands) ? event.commands : []
+        if (next.length > 0 && selectedProvider) {
+          sharedCommandOptionsCache[selectedProvider.id] = next
+          setCommandOptions(next)
+        }
+        return
+      }
+
       if (event.type === 'tool') {
         const toolId = event.id || `${event.kind || 'tool'}:${event.title}`
 
@@ -668,6 +757,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
 
       if (event.type === 'error') {
         activeRequestIdRef.current = null
+        activeAssistantMessageIndexRef.current = null
         setLoading(false)
         const wasCancelled = /cancel|aborted/i.test(event.message)
 
@@ -699,6 +789,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
 
       if (event.type === 'done') {
         activeRequestIdRef.current = null
+        activeAssistantMessageIndexRef.current = null
         setLoading(false)
 
         if (event.reply?.id) {
@@ -706,6 +797,32 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
             ...current,
             acpSessionId: event.reply.id,
           }))
+        }
+
+        if (selectedProvider?.id && event.reply?.id) {
+          void window.opensmith.ai
+            .listModes({
+              providerId: selectedProvider.id,
+              cwd,
+              sessionId: event.reply.id,
+            })
+            .then((modeState) => {
+              const nextModes = Array.isArray(modeState?.modes) ? modeState.modes : []
+              if (nextModes.length > 0) {
+                setModeOptions(nextModes)
+              }
+
+              const currentModeId = typeof modeState?.currentModeId === 'string' ? modeState.currentModeId : null
+              if (currentModeId) {
+                updateTab((current) => ({
+                  ...current,
+                  acpModeId: currentModeId,
+                }))
+              }
+            })
+            .catch(() => {
+              // no-op
+            })
         }
 
         const snapshot = normalizeUsageSnapshot(event.reply?.usage)
@@ -757,7 +874,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
       }
       pendingAssistantTextRef.current = ''
     }
-  }, [enqueueAssistantDelta, selectedProvider?.model, updateTab])
+  }, [cwd, enqueueAssistantDelta, selectedProvider, updateTab])
 
   useEffect(() => {
     function handlePointerDown(event: PointerEvent) {
@@ -766,6 +883,9 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
         return
       }
       if (modelMenuRef.current?.contains(target)) {
+        return
+      }
+      if (modeMenuRef.current?.contains(target)) {
         return
       }
       setModelMenuOpen(false)
@@ -865,6 +985,129 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
     void loadModels()
   }, [selectedProvider, cwd, updateTab])
 
+  useEffect(() => {
+    async function loadModes() {
+      if (!selectedProvider) {
+        setModeOptions([])
+        return
+      }
+
+      try {
+        const modeState = await window.opensmith.ai.listModes({
+          providerId: selectedProvider.id,
+          cwd,
+          sessionId: tabRef.current.acpSessionId || undefined,
+        })
+
+        const modes = Array.isArray(modeState?.modes)
+          ? modeState.modes
+              .filter((item) => typeof item?.id === 'string' && item.id.trim().length > 0)
+              .map((item) => ({
+                id: item.id.trim(),
+                name: typeof item.name === 'string' ? item.name : item.id,
+                description: typeof item.description === 'string' ? item.description : '',
+              }))
+          : []
+
+        setModeOptions(modes)
+
+        const modeId = typeof modeState?.currentModeId === 'string' ? modeState.currentModeId : null
+        const modeSessionId = typeof modeState?.sessionId === 'string' ? modeState.sessionId : null
+
+        if (modeId || modeSessionId) {
+          updateTab((current) => ({
+            ...current,
+            ...(modeId ? { acpModeId: modeId } : {}),
+            ...(modeSessionId ? { acpSessionId: modeSessionId } : {}),
+          }))
+        }
+      } catch {
+        setModeOptions([])
+      }
+    }
+
+    void loadModes()
+  }, [selectedProvider, cwd, tab.acpSessionId, updateTab])
+
+  useEffect(() => {
+    async function loadCommands() {
+      if (!selectedProvider) {
+        setCommandOptions([])
+        return
+      }
+
+      const providerId = selectedProvider.id
+      const activeSessionId = tabRef.current.acpSessionId || ''
+      const inflightKey = getCommandInflightKey(providerId, cwd, activeSessionId)
+      const cached = sharedCommandOptionsCache[providerId]
+      if (cached && cached.length > 0) {
+        setCommandOptions(cached)
+      }
+
+      try {
+        let inflight = sharedCommandOptionsInflight.get(inflightKey)
+        if (!inflight) {
+          inflight = window.opensmith.ai
+            .listCommands({
+              providerId,
+              cwd,
+              sessionId: activeSessionId || undefined,
+            })
+            .then((commands) => {
+              const normalized = Array.isArray(commands)
+                ? commands
+                    .filter((item) => typeof item?.name === 'string' && item.name.trim().length > 0)
+                    .map((item) => ({
+                      name: item.name.trim(),
+                      description: typeof item.description === 'string' ? item.description : '',
+                    }))
+                : []
+
+              if (normalized.length > 0) {
+                sharedCommandOptionsCache[providerId] = normalized
+              }
+              return normalized
+            })
+            .finally(() => {
+              sharedCommandOptionsInflight.delete(inflightKey)
+            })
+          sharedCommandOptionsInflight.set(inflightKey, inflight)
+        }
+
+        const commands = await inflight
+        if (commands.length > 0) {
+          setCommandOptions(commands)
+        }
+      } catch {
+        if (!cached || cached.length === 0) {
+          setCommandOptions([])
+        }
+      }
+    }
+
+    void loadCommands()
+  }, [selectedProvider, cwd, tab.acpSessionId])
+
+  const applySlashCommand = useCallback((name: string) => {
+    updateTab((current) => {
+      const lines = current.input.split('\n')
+      const firstLine = lines[0] ?? ''
+      if (!firstLine.startsWith('/')) {
+        return current
+      }
+
+      const commandSegment = firstLine.slice(1)
+      const whitespaceIndex = commandSegment.search(/\s/)
+      const remainder = whitespaceIndex >= 0 ? commandSegment.slice(whitespaceIndex + 1).trimStart() : ''
+      lines[0] = `/${name}${remainder ? ` ${remainder}` : ' '}`
+
+      return {
+        ...current,
+        input: lines.join('\n'),
+      }
+    })
+  }, [updateTab])
+
   async function addFileContext() {
     const picked = await window.opensmith.fs.openFile(null)
     if (!picked) {
@@ -920,6 +1163,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
     }))
 
     toolMessageIndexByIdRef.current = {}
+    activeAssistantMessageIndexRef.current = null
     cancelRequestedRef.current = false
 
     setLoading(true)
@@ -936,6 +1180,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
         messages: usable,
         cwd,
         model: current.model || provider.model,
+        modeId: current.acpModeId || undefined,
         sessionId: current.acpSessionId || undefined,
       })
 
@@ -1046,6 +1291,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
 
     activeRequestIdRef.current = null
     toolMessageIndexByIdRef.current = {}
+    activeAssistantMessageIndexRef.current = null
     cancelRequestedRef.current = false
 
     updateTab((prev) => ({
@@ -1071,6 +1317,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
         messages: usable,
         cwd,
         model: current.model || selectedProvider.model,
+        modeId: current.acpModeId || undefined,
         sessionId: undefined,
       })
 
@@ -1134,6 +1381,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
   async function handleStopGeneration() {
     const requestId = activeRequestIdRef.current
     cancelRequestedRef.current = true
+    activeAssistantMessageIndexRef.current = null
 
     setLoading(false)
 
@@ -1211,14 +1459,15 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
             } : null
 
             if (toolData) {
+              const isCompacting = toolData.kind === 'session' && toolData.title.trim().toLowerCase() === 'compacting...'
               return (
                 <div key={index} className="mr-auto w-full max-w-full py-0.5">
                   <div className="flex max-w-full items-start gap-2.5 py-1 text-[13px]">
                     <span className="text-[#8bb4ff] flex shrink-0 items-center justify-center">
-                      {toolKindIcon(toolData.kind)}
+                      {isCompacting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : toolKindIcon(toolData.kind)}
                     </span>
                     <div className="min-w-0 flex-1">
-                      <div className="truncate text-[#cccccc]">{toolData.title}</div>
+                      <div className={isCompacting ? 'ai-compacting-shimmer truncate font-medium' : 'truncate text-[#cccccc]'}>{toolData.title}</div>
                       {toolData.detail ? <div className="truncate text-[11px] text-[#7d7d7d]">{toolData.detail}</div> : null}
                     </div>
                     <span className={`text-[12px] flex items-center gap-1.5 ${
@@ -1227,7 +1476,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
                       toolData.status === 'completed' ? 'text-[#878787]' :
                       'text-[#707070]'
                     }`}>
-                      {toolData.status === 'in_progress' ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                      {toolData.status === 'in_progress' && !isCompacting ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
                       {toolStatusLabel(toolData.status)}
                     </span>
                   </div>
@@ -1262,7 +1511,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
                   <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={markdownComponents}>
                     {normalizeMarkdownSpacing(message.content || '')}
                   </ReactMarkdown>
-                  {loading && index === lastAssistantTextIndex ? (
+                  {loading && index === activeAssistantMessageIndexRef.current ? (
                     <span className="inline-block animate-pulse text-[#f0f0f0]">▌</span>
                   ) : null}
                 </div>
@@ -1352,6 +1601,29 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
               value={tab.input}
               onChange={(event) => updateTab((current) => ({ ...current, input: event.target.value }))}
               onKeyDown={(event) => {
+                if (slashCommandMenuOpen && slashCommandSuggestions.length > 0) {
+                  if (event.key === 'ArrowDown') {
+                    event.preventDefault()
+                    setCommandMenuIndex((prev) => (prev + 1) % slashCommandSuggestions.length)
+                    return
+                  }
+
+                  if (event.key === 'ArrowUp') {
+                    event.preventDefault()
+                    setCommandMenuIndex((prev) => (prev - 1 + slashCommandSuggestions.length) % slashCommandSuggestions.length)
+                    return
+                  }
+
+                  if ((event.key === 'Tab' || event.key === 'Enter') && !event.shiftKey) {
+                    event.preventDefault()
+                    const selected = slashCommandSuggestions[commandMenuIndex] ?? slashCommandSuggestions[0]
+                    if (selected) {
+                      applySlashCommand(selected.name)
+                    }
+                    return
+                  }
+                }
+
                 if (event.key !== 'Enter' || event.shiftKey) {
                   return
                 }
@@ -1364,6 +1636,26 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
               placeholder={opencodeInstalled ? 'Ask OpenSmith anything, @ to add files, / for commands' : 'Install OpenCode CLI to enable AI chat'}
               rows={3}
             />
+
+            {slashCommandMenuOpen ? (
+              <div className="mb-2 max-h-52 overflow-auto rounded-xl border border-[#2f2f2f] bg-[#111111]/95 p-1">
+                {slashCommandSuggestions.map((command, index) => {
+                  const isActive = index === commandMenuIndex
+                  return (
+                    <button
+                      key={command.name}
+                      type="button"
+                      className={`w-full rounded-lg px-2.5 py-2 text-left transition-colors ${isActive ? 'bg-white/12 text-[#f0f0f0]' : 'text-[#c5c5c5] hover:bg-white/8'}`}
+                      onMouseEnter={() => setCommandMenuIndex(index)}
+                      onClick={() => applySlashCommand(command.name)}
+                    >
+                      <div className="text-[13px] font-medium">/{command.name}</div>
+                      {command.description ? <div className="mt-0.5 truncate text-[11px] text-[#8d8d8d]">{command.description}</div> : null}
+                    </button>
+                  )
+                })}
+              </div>
+            ) : null}
           </div>
 
           <div className="flex items-center justify-between mb-2.5 mx-1 border-t border-[#2c2c2c] pt-2">
@@ -1382,6 +1674,72 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
                   </span>
                   <ChevronDown className="h-3.5 w-3.5" />
                 </button>
+
+                <div className="relative" ref={modeMenuRef}>
+                  <button
+                    type="button"
+                    className="rounded-lg px-2 py-1.5 text-sm text-[#878787] outline-none hover:bg-white/8 hover:text-[#d0d0d0] inline-flex items-center gap-1.5 w-auto justify-between transition-colors duration-200"
+                    onClick={() => setActiveMetaPopover((prev) => (prev === 'access' ? null : 'access'))}
+                    aria-haspopup="listbox"
+                    aria-expanded={activeMetaPopover === 'access'}
+                  >
+                    <span>{modeLabel}</span>
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  </button>
+
+                  {activeMetaPopover === 'access' ? (
+                    <div className="absolute left-0 bottom-[calc(100%+8px)] w-[280px] max-w-[70vw] rounded-xl border border-[#363636] bg-[#181818] p-1.5 shadow-[0_16px_40px_rgba(0,0,0,0.45)] z-40" role="listbox">
+                      <div className="grid gap-1">
+                        {modeOptions.length > 0 ? modeOptions.map((mode) => {
+                          const active = mode.id === selectedModeId
+                          return (
+                            <button
+                              key={mode.id}
+                              type="button"
+                              className={`w-full rounded-lg px-2.5 py-2 text-left transition-colors ${active ? 'bg-white/12 text-[#efefef]' : 'text-[#c4c4c4] hover:bg-[#2a2a2a]'}`}
+                              onClick={() => {
+                                updateTab((current) => ({
+                                  ...current,
+                                  acpModeId: mode.id,
+                                }))
+
+                                if (!selectedProvider) {
+                                  setActiveMetaPopover(null)
+                                  return
+                                }
+
+                                void window.opensmith.ai
+                                  .setMode({
+                                    providerId: selectedProvider.id,
+                                    cwd,
+                                    sessionId: tabRef.current.acpSessionId || undefined,
+                                    modeId: mode.id,
+                                  })
+                                  .then((result) => {
+                                    updateTab((current) => ({
+                                      ...current,
+                                      acpSessionId: result.sessionId,
+                                      acpModeId: result.modeId,
+                                    }))
+                                  })
+                                  .catch(() => {
+                                    // no-op
+                                  })
+
+                                setActiveMetaPopover(null)
+                              }}
+                            >
+                              <div className="text-[13px] font-medium">{displayModeName(mode)}</div>
+                              {mode.description ? <div className="mt-0.5 text-[11px] text-[#898989]">{mode.description}</div> : null}
+                            </button>
+                          )
+                        }) : (
+                          <div className="px-2.5 py-2 text-[12px] text-[#8f8f8f]">Modes unavailable</div>
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
 
                 <button type="button" className="bg-transparent hover:bg-white/8 text-[#b8b8b8] transition rounded-full p-1.5 outline-none" onClick={addFileContext} aria-label="Add file">
                     <Plus className="h-4 w-4" />
@@ -1520,21 +1878,6 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
                   </div>
                 )
               })()}
-              <div className="relative">
-                <button
-                  type="button"
-                  className="text-xs text-[#aaaaaa] inline-flex items-center gap-1 rounded-full px-2 py-1 hover:bg-[#242424] transition-colors"
-                  onClick={() => setActiveMetaPopover((prev) => (prev === 'access' ? null : 'access'))}
-                >
-                  <TriangleAlert className="h-3.5 w-3.5" />
-                  Full access
-                </button>
-                {activeMetaPopover === 'access' ? (
-                  <div className="absolute right-0 bottom-[calc(100%+8px)] w-[220px] rounded-xl border border-[#353535] bg-[#161616] px-3 py-2 text-[12px] leading-relaxed text-[#b9b9b9] shadow-[0_14px_30px_rgba(0,0,0,0.45)] z-40" role="status">
-                    Model tools can read and write files in this space.
-                  </div>
-                ) : null}
-              </div>
 
               {loading ? (
                 <button

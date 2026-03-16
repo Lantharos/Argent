@@ -27,6 +27,7 @@ export type AIReply = {
 export type AIStreamEvent =
   | { type: 'text-delta'; delta: string }
   | { type: 'thought-delta'; delta: string }
+  | { type: 'commands'; commands: Array<{ name: string; description?: string }> }
   | {
       type: 'tool'
       id: string | null
@@ -55,6 +56,7 @@ export type AITabData = AppTabBase & {
   type: 'ai'
   providerId: string | null
   model: string | null
+  acpModeId?: string | null
   acpSessionId?: string | null
   usageByModel?: Record<string, { usedTokens: number | null; maxTokens: number | null }>
   messages: ChatMessage[]
@@ -160,6 +162,7 @@ declare global {
           providerId: string
           messages: ChatMessage[]
           model?: string
+          modeId?: string
           temperature?: number
           cwd?: string
           sessionId?: string
@@ -168,12 +171,16 @@ declare global {
           providerId: string
           messages: ChatMessage[]
           model?: string
+          modeId?: string
           temperature?: number
           cwd?: string
           sessionId?: string
         }) => Promise<{ requestId: string }>
         streamCancel: (payload: { requestId: string }) => Promise<boolean>
         listModels: (payload: { providerId: string; cwd?: string }) => Promise<Array<{ id: string; label: string; contextWindow?: number | null }>>
+        listCommands: (payload: { providerId: string; cwd?: string; sessionId?: string }) => Promise<Array<{ name: string; description?: string }>>
+        listModes: (payload: { providerId: string; cwd?: string; sessionId?: string }) => Promise<{ sessionId: string | null; currentModeId: string | null; modes: Array<{ id: string; name: string; description?: string }> }>
+        setMode: (payload: { providerId: string; cwd?: string; sessionId?: string; modeId: string }) => Promise<{ sessionId: string; modeId: string }>
         onStreamEvent: (callback: (payload: { requestId: string; event: AIStreamEvent }) => void) => () => void
       }
       terminal: {

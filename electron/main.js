@@ -11,7 +11,14 @@ import {
   upsertProvider,
 } from './store/providersStore.js'
 import { providerSchema } from './ai/schema.js'
-import { listAssistantModels, requestAssistantReply, requestAssistantReplyStream } from './ai/client.js'
+import {
+  listAssistantCommands,
+  listAssistantModels,
+  listAssistantModes,
+  requestAssistantReply,
+  requestAssistantReplyStream,
+  setAssistantMode,
+} from './ai/client.js'
 import { TerminalManager } from './terminal/terminalManager.js'
 import { setupGitHandlers } from './git/gitManager.js'
 
@@ -248,6 +255,9 @@ function setupIpc() {
     return true
   })
   ipcMain.handle('ai:list-models', async (_, payload) => listAssistantModels(payload))
+  ipcMain.handle('ai:list-commands', async (_, payload) => listAssistantCommands(payload))
+  ipcMain.handle('ai:list-modes', async (_, payload) => listAssistantModes(payload))
+  ipcMain.handle('ai:set-mode', async (_, payload) => setAssistantMode(payload))
 
   ipcMain.handle('terminal:create', (_, cwd) => terminalManager.createSession(cwd))
 

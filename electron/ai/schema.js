@@ -20,6 +20,7 @@ export const chatRequestSchema = z.object({
   providerId: z.string().min(1),
   messages: z.array(messageSchema).min(1),
   model: z.string().min(1).optional(),
+  modeId: z.string().min(1).optional(),
   temperature: z.number().min(0).max(2).optional(),
   cwd: z.string().optional(),
   sessionId: z.string().min(1).optional(),

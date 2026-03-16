@@ -35,6 +35,9 @@ contextBridge.exposeInMainWorld('opensmith', {
     streamStart: (payload) => ipcRenderer.invoke('ai:stream-start', payload),
     streamCancel: (payload) => ipcRenderer.invoke('ai:stream-cancel', payload),
     listModels: (payload) => ipcRenderer.invoke('ai:list-models', payload),
+    listCommands: (payload) => ipcRenderer.invoke('ai:list-commands', payload),
+    listModes: (payload) => ipcRenderer.invoke('ai:list-modes', payload),
+    setMode: (payload) => ipcRenderer.invoke('ai:set-mode', payload),
     onStreamEvent: (callback) => on('ai:stream-event', callback),
   },
   terminal: {
