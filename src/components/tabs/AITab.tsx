@@ -13,11 +13,12 @@ import {
   TerminalSquare,
   TriangleAlert,
   Plus,
-  Loader2
+  Loader2,
 } from 'lucide-react'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 import type { AITabData, AIStreamEvent, ProviderConfig } from '../../types/opensmith'
+import { extractModelMeta, ProviderGlyph } from './providerIcon'
 
 type Props = {
   tab: AITabData
@@ -331,6 +332,10 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
     return selectedModelValue || 'Select model'
   }, [modelOptions, selectedProvider, selectedModelValue])
 
+  const selectedModelMeta = useMemo(() => {
+    return extractModelMeta(selectedModelLabel, selectedModelValue, selectedProvider?.id || tab.providerId || null)
+  }, [selectedModelLabel, selectedModelValue, selectedProvider, tab.providerId])
+
   const groupedModelFamilies = useMemo(() => {
     const query = modelFilter.trim().toLowerCase()
     const map = new Map<string, ModelFamily>()
@@ -435,8 +440,9 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
   const usedTokens = selectedModelUsage?.usedTokens ?? estimatedTokens
 
   const assistantModelLabel = useMemo(() => {
-    return selectedModelLabel || selectedModelValue || selectedProvider?.model || 'Model'
-  }, [selectedModelLabel, selectedModelValue, selectedProvider])
+    const label = selectedModelLabel || selectedModelValue || selectedProvider?.model || 'Model'
+    return extractModelMeta(label, selectedModelValue, selectedProvider?.id || tab.providerId || null)
+  }, [selectedModelLabel, selectedModelValue, selectedProvider, tab.providerId])
 
   useEffect(() => {
     setCollapsedGroups((prev) => {
@@ -1306,7 +1312,10 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
                           </button>
                         ) : null}
                       </div>
-                      <span className="truncate pl-3 text-[#7d7d7d]">{assistantModelLabel}</span>
+                      <span className="inline-flex max-w-full items-center gap-1.5 truncate pl-3 text-[#7d7d7d]">
+                        <ProviderGlyph providerKey={assistantModelLabel.providerKey} className="h-3.5 w-3.5 text-[#8f8f8f]" />
+                        <span className="truncate">{assistantModelLabel.modelName}</span>
+                      </span>
                     </div>
                   )
                 })()}
@@ -1367,7 +1376,10 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
                   aria-haspopup="listbox"
                   aria-expanded={modelMenuOpen}
                 >
-                  <span className="whitespace-nowrap">{selectedModelLabel}</span>
+                  <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                    <ProviderGlyph providerKey={selectedModelMeta.providerKey} className="h-3.5 w-3.5 text-[#bdbdbd]" />
+                    <span>{selectedModelMeta.modelName}</span>
+                  </span>
                   <ChevronDown className="h-3.5 w-3.5" />
                 </button>
 
