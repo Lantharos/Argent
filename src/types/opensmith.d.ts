@@ -171,6 +171,7 @@ declare global {
         chooseFolder: () => Promise<string | null>
         openInExplorer: (targetPath: string) => Promise<boolean>
         getHomeDirectory: () => Promise<string>
+        onOpenCommandPalette: (callback: () => void) => () => void
       }
       window: {
         minimize: () => Promise<boolean>

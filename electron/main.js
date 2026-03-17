@@ -80,6 +80,26 @@ function createMainWindow() {
 
 function setupWebviewHardening() {
   app.on('web-contents-created', (_, contents) => {
+    contents.on('before-input-event', (event, input) => {
+      if (input.type !== 'keyDown') {
+        return
+      }
+
+      const key = (input.key || '').toLowerCase()
+      const isOpenPaletteShortcut = (input.control || input.meta) && ['t', 'k', 'p'].includes(key)
+      if (!isOpenPaletteShortcut) {
+        return
+      }
+
+      const target = contents.getType() === 'webview' ? contents.hostWebContents : contents
+      if (!target || target.isDestroyed()) {
+        return
+      }
+
+      event.preventDefault()
+      target.send('app:open-command-palette')
+    })
+
     contents.on('will-attach-webview', (event, webPreferences, params) => {
       delete webPreferences.preload
       webPreferences.nodeIntegration = false

@@ -176,6 +176,12 @@ export function CommandPalette({ spaces, activeSpaceId, onCreateTab, onSelectTab
   }, [open])
 
   useEffect(() => {
+    return window.opensmith.app.onOpenCommandPalette(() => {
+      openPalette()
+    })
+  }, [])
+
+  useEffect(() => {
     if (!mounted) {
       setActiveIndex(0)
       return

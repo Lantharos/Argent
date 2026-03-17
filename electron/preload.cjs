@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('opensmith', {
     chooseFolder: () => ipcRenderer.invoke('app:choose-folder'),
     openInExplorer: (targetPath) => ipcRenderer.invoke('app:open-in-explorer', targetPath),
     getHomeDirectory: () => ipcRenderer.invoke('app:get-home-directory'),
+    onOpenCommandPalette: (callback) => on('app:open-command-palette', callback),
   },
   window: {
     minimize: () => ipcRenderer.invoke('window:minimize'),
