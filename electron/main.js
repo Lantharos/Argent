@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, screen, shell } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import { randomUUID } from 'node:crypto'
@@ -31,14 +31,20 @@ const isDev = !app.isPackaged && Boolean(process.env.VITE_DEV_SERVER_URL)
 let windowRef = null
 let terminalManager = null
 const activeAIStreams = new Map()
+const DEFAULT_WINDOW_WIDTH = 1400
+const DEFAULT_WINDOW_HEIGHT = 900
 
 function createMainWindow() {
   const isWindows = process.platform === 'win32'
   const isMac = process.platform === 'darwin'
+  const primaryDisplay = screen.getPrimaryDisplay()
+  const { width: availableWidth, height: availableHeight } = primaryDisplay.workAreaSize
+  const shouldStartMaximized =
+    availableWidth <= DEFAULT_WINDOW_WIDTH || availableHeight <= DEFAULT_WINDOW_HEIGHT
   const win = new BrowserWindow({
     frame: false,
-    width: 1400,
-    height: 900,
+    width: DEFAULT_WINDOW_WIDTH,
+    height: DEFAULT_WINDOW_HEIGHT,
     minWidth: 900,
     minHeight: 600,
     backgroundColor: '#00000000',
@@ -67,6 +73,9 @@ function createMainWindow() {
   win.setBackgroundColor('#00000000')
   if (isWindows) {
     win.setBackgroundMaterial('acrylic')
+  }
+  if (shouldStartMaximized) {
+    win.maximize()
   }
 
   if (isDev) {
