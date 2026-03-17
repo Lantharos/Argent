@@ -1,8 +1,24 @@
 # OpenSmith
 
-OpenSmith is a desktop coding workspace built with Electron, React, and TypeScript. It combines an AI chat surface, file editor, terminal, browser, and Git tooling into one release-oriented app shell.
+A browser for building things.
+
+OpenSmith is a desktop workspace that brings your AI chat, code editor, terminal, browser, and Git tools together in one window, organized as tabs, composable as splits.
 
 ![OpenSmith preview](./preview.png)
+
+## Philosophy
+
+OpenSmith is designed to be flexible.
+
+It started from a project-management-minded workflow, but it is not meant to force one rigid way of working. You can use it as a structured multi-surface workspace, or just use the pieces you care about.
+
+- use it as an organized shell for multiple terminal-driven agent sessions
+- use it as a regular code editor for local files
+- use it as a browser for docs, dashboards, and research
+- use it as an AI-first workspace
+- use it as a mixed environment where all of those stay visible and organized together
+
+That flexibility is the point. OpenSmith tries to give you a place to work that stays composable without being overly opinionated about your exact workflow.
 
 ## Status
 
@@ -19,6 +35,89 @@ This repository is Windows-first today. The codebase includes cross-platform pie
 - Built-in browser tab using Electron `webview`
 - Git tab for status, staging, diffs, commit history, remotes, and sync actions
 - Split-pane workspaces and persistent app state between launches
+
+## Workflow Features
+
+### Spaces And Tabs
+
+OpenSmith organizes work into spaces. A space can point at a project folder or act as a more general workspace, and each space can hold multiple tabs for AI, editing, terminal work, browsing, and Git.
+
+Tabs are not just flat pages. You can drag a tab from the sidebar into the active workspace to split the view and build side-by-side or stacked layouts. That makes it easy to keep, for example, an editor beside a terminal or an AI conversation beside the file you are changing.
+
+That same setup also works well for people running multiple agent or CLI sessions in parallel. For example, you can keep several terminal tabs active for different Claude Code or other tool runs while keeping them separated by space, tab, or split view instead of piling everything into one shell window.
+
+### Command Palette
+
+The app includes a command palette for quick navigation and creation. It can be opened with:
+
+- `Ctrl+T`
+- `Ctrl+K`
+- `Ctrl+P`
+
+On macOS, the same shortcuts map to `Cmd`.
+
+The palette is designed for jumping between tabs and spaces or creating a new tab without mousing through the sidebar.
+
+### Workspace Navigation Gestures
+
+OpenSmith supports horizontal workspace paging between tab groups and pages, including touchpad-friendly navigation.
+
+- two-finger horizontal swipes can move between workspace pages
+- the app supports "peek" style partial movement while swiping before the page commits
+- browser tabs forward those swipe gestures back to the workspace so navigation still feels connected instead of trapping the gesture inside the webview
+
+This makes moving across a larger workspace feel more like navigating a native desktop surface than clicking through isolated tabs.
+
+### AI Tab
+
+The AI tab is built for iterative coding work rather than one-shot prompts.
+
+- streaming responses
+- model picker with grouped variants
+- mode switching
+- slash command support
+- file and image attachments
+- conversation continuity per tab
+- context usage display so you can see how much of the model window is being used
+
+### Editor
+
+The editor tab includes both file browsing and direct editing in the same surface.
+
+- expandable file tree rooted at the current workspace folder
+- open files in-place or in a new tab
+- drag and drop files between folders
+- context menu actions for cut, copy, paste, and delete
+- `Ctrl+S` or `Cmd+S` to save
+- font scaling shortcuts for quicker readability changes
+
+### Terminal
+
+Terminal tabs run real shell sessions through `node-pty`, not a fake console view. Sessions can persist with saved scrollback, resize with the workspace, and reopen with their previous history visible.
+
+### Browser
+
+The browser tab is useful for docs, testing, and quick research without leaving the app.
+
+- address bar with URL-or-search behavior
+- back, forward, and refresh controls
+- shared persistent browser partition
+- workspace-aware swipe integration
+
+It can also simply be used as a normal browser tab when that is all you need. OpenSmith does not require every tab to be part of an AI workflow.
+
+### Git
+
+The Git tab is meant to cover the common local source control loop without leaving OpenSmith.
+
+- repo detection and initialization
+- changed-file list with stage and unstage controls
+- diff viewing
+- commit creation
+- remote inspection and origin setup
+- recent history browsing
+- commit patch inspection
+- sync-oriented workflow for pulling and pushing changes
 
 ## Current AI Support
 
