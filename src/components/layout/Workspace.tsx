@@ -62,8 +62,12 @@ type WorkspacePage = {
 const TAB_DRAG_MIME = 'application/x-opensmith-tab'
 const TAB_DRAG_FALLBACK_PREFIX = 'opensmith-tab:'
 const WORKSPACE_PAGE_SWITCH_THRESHOLD = 0.32
-const WORKSPACE_GESTURE_SETTLE_MS = 180
+const WORKSPACE_GESTURE_SETTLE_MS = 120
 const WORKSPACE_FLING_VELOCITY = 1.1
+const WORKSPACE_GESTURE_MIN_DELTA = 1.1
+const WORKSPACE_GESTURE_TAIL_DELTA = 4
+const BROWSER_GESTURE_MIN_DELTA = 0.75
+const BROWSER_GESTURE_TAIL_DELTA = 1.6
 const BROWSER_SWIPE_EDGE_WIDTH = 28
 
 function areSameIds(a: string[], b: string[]) {
@@ -352,6 +356,7 @@ export function Workspace({
   const [viewportWidth, setViewportWidth] = useState(0)
   const [pageGestureOffset, setPageGestureOffset] = useState(0)
   const [pageGestureActive, setPageGestureActive] = useState(false)
+  const [pageAnchorIndex, setPageAnchorIndex] = useState<number | null>(null)
   const titlebarVisibleRef = useRef(false)
   const tabLastSeenRef = useRef<Record<string, number>>({})
   const splitLayerRef = useRef<HTMLDivElement | null>(null)
@@ -377,25 +382,35 @@ export function Workspace({
   const currentTab = activeTab
   const workspacePages = useMemo(() => buildWorkspacePages(space), [space])
   const currentPageIndex = useMemo(() => getPageIndexForTab(workspacePages, currentTab?.id ?? null), [currentTab?.id, workspacePages])
+  const activePageIndex = pageAnchorIndex ?? currentPageIndex
   const activeGroup = useMemo(() => findGroupByTab(space.tabGroups, currentTab?.id ?? null), [currentTab?.id, space.tabGroups])
   const visibleTabIds = useMemo(() => {
     if (!currentTab || !workspacePages.length) {
       return []
     }
 
-    const pinnedIndices = new Set([currentPageIndex - 1, currentPageIndex, currentPageIndex + 1])
+    const pinnedIndices = new Set([activePageIndex - 1, activePageIndex, activePageIndex + 1])
     return Array.from(pinnedIndices)
       .map((index) => workspacePages[index])
       .filter((page): page is WorkspacePage => Boolean(page))
       .flatMap((page) => page.tabIds)
-  }, [currentPageIndex, currentTab, workspacePages])
+  }, [activePageIndex, currentTab, workspacePages])
   const isBrowserTab = currentTab?.type === 'browser'
   const hasWorkspacePaging = workspacePages.length > 1
   const pageWidth = viewportWidth
   const pageSpan = pageWidth
-  const pageTrackOffset = viewportWidth > 0 ? -currentPageIndex * pageSpan + pageGestureOffset : 0
-  const minGestureOffset = hasWorkspacePaging && currentPageIndex < workspacePages.length - 1 ? -pageSpan : 0
-  const maxGestureOffset = hasWorkspacePaging && currentPageIndex > 0 ? pageSpan : 0
+  const pageTrackOffset = viewportWidth > 0 ? -activePageIndex * pageSpan + pageGestureOffset : 0
+  const minGestureOffset = hasWorkspacePaging && activePageIndex < workspacePages.length - 1 ? -pageSpan : 0
+  const maxGestureOffset = hasWorkspacePaging && activePageIndex > 0 ? pageSpan : 0
+
+  useEffect(() => {
+    if (pageAnchorIndex === null) {
+      return
+    }
+    if (pageAnchorIndex === currentPageIndex) {
+      setPageAnchorIndex(null)
+    }
+  }, [currentPageIndex, pageAnchorIndex])
 
   const shouldKeepTabMounted = useCallback((tab: AppTab) => {
     if (tab.type === 'ai') {
@@ -753,23 +768,24 @@ export function Workspace({
 
     const offset = pageGestureOffsetRef.current
     const velocity = pageGestureVelocityRef.current
-    let targetIndex = currentPageIndex
+    let targetIndex = activePageIndex
     if (
       (offset <= -pageSpan * WORKSPACE_PAGE_SWITCH_THRESHOLD || velocity >= WORKSPACE_FLING_VELOCITY)
-      && currentPageIndex < workspacePages.length - 1
+      && activePageIndex < workspacePages.length - 1
     ) {
-      targetIndex = currentPageIndex + 1
+      targetIndex = activePageIndex + 1
     } else if (
       (offset >= pageSpan * WORKSPACE_PAGE_SWITCH_THRESHOLD || velocity <= -WORKSPACE_FLING_VELOCITY)
-      && currentPageIndex > 0
+      && activePageIndex > 0
     ) {
-      targetIndex = currentPageIndex - 1
+      targetIndex = activePageIndex - 1
     }
 
-    if (targetIndex !== currentPageIndex) {
+    if (targetIndex !== activePageIndex) {
       const targetPage = workspacePages[targetIndex]
       const nextTabId = targetPage ? getPreferredPageTabId(space, targetPage, currentTab?.id ?? null) : null
       if (nextTabId) {
+        setPageAnchorIndex(targetIndex)
         onSelectWorkspaceTab(space.id, nextTabId)
       }
     }
@@ -781,14 +797,14 @@ export function Workspace({
     setPageGestureActive(false)
   }
 
-  function schedulePageGestureFinish() {
+  function schedulePageGestureFinish(delay = WORKSPACE_GESTURE_SETTLE_MS) {
     if (pageGestureTimeoutRef.current) {
       window.clearTimeout(pageGestureTimeoutRef.current)
     }
 
     pageGestureTimeoutRef.current = window.setTimeout(() => {
       finishPageGesture()
-    }, WORKSPACE_GESTURE_SETTLE_MS)
+    }, delay)
   }
 
   function settlePageGestureOnInteraction() {
@@ -804,8 +820,15 @@ export function Workspace({
     finishPageGesture()
   }
 
-  function applyWorkspaceSwipeDelta(deltaX: number) {
+  function applyWorkspaceSwipeDelta(deltaX: number, source: WorkspaceSwipeDetail['source'] = 'workspace') {
     if (!hasWorkspacePaging || viewportWidth <= 0) {
+      return
+    }
+
+    const minDelta = source === 'browser-webview' ? BROWSER_GESTURE_MIN_DELTA : WORKSPACE_GESTURE_MIN_DELTA
+    const tailDelta = source === 'browser-webview' ? BROWSER_GESTURE_TAIL_DELTA : WORKSPACE_GESTURE_TAIL_DELTA
+    const absDelta = Math.abs(deltaX)
+    if (absDelta < minDelta) {
       return
     }
 
@@ -825,7 +848,7 @@ export function Workspace({
     const nextOffset = applyGestureResistance(pageGestureOffsetRef.current - deltaX, minGestureOffset, maxGestureOffset)
     pageGestureOffsetRef.current = nextOffset
     setPageGestureOffset(nextOffset)
-    schedulePageGestureFinish()
+    schedulePageGestureFinish(absDelta < tailDelta ? 72 : WORKSPACE_GESTURE_SETTLE_MS)
   }
 
   function onWorkspaceWheel(event: React.WheelEvent<HTMLDivElement>) {
@@ -842,7 +865,7 @@ export function Workspace({
 
     event.preventDefault()
     event.stopPropagation()
-    applyWorkspaceSwipeDelta(event.deltaX)
+    applyWorkspaceSwipeDelta(event.deltaX, 'workspace')
   }
 
   useEffect(() => {
@@ -851,7 +874,7 @@ export function Workspace({
       if (!detail || typeof detail.deltaX !== 'number') {
         return
       }
-      applyWorkspaceSwipeDelta(detail.deltaX)
+      applyWorkspaceSwipeDelta(detail.deltaX, detail.source)
     }
 
     window.addEventListener('opensmith:workspace-swipe', onWorkspaceSwipe)
@@ -1104,7 +1127,7 @@ export function Workspace({
   }
 
   function renderPage(page: WorkspacePage, index: number) {
-    const isCurrentPage = index === currentPageIndex
+    const isCurrentPage = index === activePageIndex
     const pageTabId = getPreferredPageTabId(space, page, isCurrentPage ? currentTab?.id ?? null : null)
 
     return (
@@ -1197,7 +1220,7 @@ export function Workspace({
             onFocusCapture={settlePageGestureOnInteraction}
           >
             <div
-              className={`flex h-full min-h-0 items-stretch will-change-transform transition-transform duration-[260ms] [transition-timing-function:cubic-bezier(0.2,0.8,0.2,1)] ${pageGestureActive ? 'transition-none' : ''}`}
+              className={`flex h-full min-h-0 items-stretch will-change-transform transition-transform duration-[180ms] [transition-timing-function:cubic-bezier(0.2,0.8,0.2,1)] ${pageGestureActive ? 'transition-none' : ''}`}
               style={{
                 transform: `translate3d(${pageTrackOffset}px, 0, 0)`,
               }}

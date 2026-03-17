@@ -35,7 +35,7 @@ const SWIPE_BRIDGE_SCRIPT = `
   window.addEventListener('wheel', (event) => {
     const absX = Math.abs(event.deltaX);
     const absY = Math.abs(event.deltaY);
-    if (absX <= 0.5 || absX < absY * 0.9) {
+    if (absX <= 0.75 || absX < absY * 0.9) {
       return;
     }
     event.preventDefault();
