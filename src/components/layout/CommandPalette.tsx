@@ -123,39 +123,39 @@ export function CommandPalette({ spaces, activeSpaceId, onCreateTab, onSelectTab
   const deferredQuery = useDeferredValue(query)
   const inputRef = useRef<HTMLInputElement | null>(null)
   const listRef = useRef<HTMLDivElement | null>(null)
-  const closeTimerRef = useRef<number | null>(null)
   const activeSpace = useMemo(() => spaces.find((space) => space.id === activeSpaceId) ?? null, [activeSpaceId, spaces])
 
   function openPalette() {
-    if (closeTimerRef.current !== null) {
-      window.clearTimeout(closeTimerRef.current)
-      closeTimerRef.current = null
-    }
     setOpen(true)
     setMounted(true)
-    window.requestAnimationFrame(() => setVisible(true))
+    setActiveIndex(0)
   }
 
   function closePalette() {
     setOpen(false)
     setVisible(false)
     setQuery('')
-    if (closeTimerRef.current !== null) {
-      window.clearTimeout(closeTimerRef.current)
-    }
-    closeTimerRef.current = window.setTimeout(() => {
-      setMounted(false)
-      closeTimerRef.current = null
-    }, EXIT_MS)
+    setActiveIndex(0)
   }
 
   useEffect(() => {
-    return () => {
-      if (closeTimerRef.current !== null) {
-        window.clearTimeout(closeTimerRef.current)
-      }
+    if (!mounted) {
+      return
     }
-  }, [])
+
+    if (open) {
+      const frame = window.requestAnimationFrame(() => setVisible(true))
+      return () => window.cancelAnimationFrame(frame)
+    }
+
+    const timer = window.setTimeout(() => {
+      setMounted(false)
+    }, EXIT_MS)
+
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [mounted, open])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -183,7 +183,6 @@ export function CommandPalette({ spaces, activeSpaceId, onCreateTab, onSelectTab
 
   useEffect(() => {
     if (!mounted) {
-      setActiveIndex(0)
       return
     }
 
@@ -194,10 +193,6 @@ export function CommandPalette({ spaces, activeSpaceId, onCreateTab, onSelectTab
 
     return () => window.cancelAnimationFrame(frame)
   }, [mounted])
-
-  useEffect(() => {
-    setActiveIndex(0)
-  }, [deferredQuery])
 
   const items = useMemo<CommandPaletteItem[]>(() => {
     const currentQuery = deferredQuery.trim()
@@ -340,14 +335,16 @@ export function CommandPalette({ spaces, activeSpaceId, onCreateTab, onSelectTab
     return nextItems.slice(0, 24)
   }, [activeSpace, activeSpaceId, deferredQuery, onAddEmptySpace, onAddSpaceFromFolder, onCreateTab, onSelectTab, spaces])
 
+  const selectedIndex = items.length === 0 ? 0 : Math.min(activeIndex, items.length - 1)
+
   useEffect(() => {
     if (!mounted) {
       return
     }
 
-    const activeElement = listRef.current?.querySelector<HTMLElement>(`[data-command-index="${activeIndex}"]`)
+    const activeElement = listRef.current?.querySelector<HTMLElement>(`[data-command-index="${selectedIndex}"]`)
     activeElement?.scrollIntoView({ block: 'nearest' })
-  }, [activeIndex, items, mounted])
+  }, [mounted, selectedIndex])
 
   const groupedItems = useMemo(() => {
     const groups = new Map<string, CommandPaletteItem[]>()
@@ -375,7 +372,7 @@ export function CommandPalette({ spaces, activeSpaceId, onCreateTab, onSelectTab
 
     if (event.key === 'Enter') {
       event.preventDefault()
-      items[activeIndex]?.run()
+      items[selectedIndex]?.run()
       return
     }
 
@@ -411,7 +408,10 @@ export function CommandPalette({ spaces, activeSpaceId, onCreateTab, onSelectTab
             <input
               ref={inputRef}
               value={query}
-              onChange={(event) => setQuery(event.target.value)}
+              onChange={(event) => {
+                setQuery(event.target.value)
+                setActiveIndex(0)
+              }}
               onKeyDown={onInputKeyDown}
               className="flex-1 border-0 bg-transparent text-[14px] text-[#e7e7e7] outline-none placeholder:text-[#7d7d7d] [-webkit-app-region:no-drag]"
               placeholder="Search tabs, ask AI, open a site, or create a new tool"
@@ -437,7 +437,7 @@ export function CommandPalette({ spaces, activeSpaceId, onCreateTab, onSelectTab
                 <div className="grid gap-1">
                   {sectionItems.map((item) => {
                     const index = items.findIndex((entry) => entry.id === item.id)
-                    const active = index === activeIndex
+                    const active = index === selectedIndex
 
                     return (
                       <button

@@ -369,6 +369,7 @@ export function Workspace({
   const pageGestureVelocityRef = useRef(0)
   const pageGestureLastEventAtRef = useRef(0)
   const pageGestureStartedAtRef = useRef(0)
+  const applyWorkspaceSwipeDeltaRef = useRef<(deltaX: number, source?: WorkspaceSwipeDetail['source']) => void>(() => {})
   const resizeStateRef = useRef<
     | {
         branchId: string
@@ -411,7 +412,10 @@ export function Workspace({
       return
     }
     if (pageAnchorIndex === currentPageIndex) {
-      setPageAnchorIndex(null)
+      const frame = window.requestAnimationFrame(() => {
+        setPageAnchorIndex(null)
+      })
+      return () => window.cancelAnimationFrame(frame)
     }
   }, [currentPageIndex, pageAnchorIndex])
 
@@ -636,9 +640,12 @@ export function Workspace({
 
   useEffect(() => {
     if (!hasWorkspacePaging && pageGestureOffsetRef.current !== 0) {
-      pageGestureOffsetRef.current = 0
-      setPageGestureOffset(0)
-      setPageGestureActive(false)
+      const frame = window.requestAnimationFrame(() => {
+        pageGestureOffsetRef.current = 0
+        setPageGestureOffset(0)
+        setPageGestureActive(false)
+      })
+      return () => window.cancelAnimationFrame(frame)
     }
   }, [hasWorkspacePaging])
 
@@ -720,10 +727,6 @@ export function Workspace({
       window.removeEventListener('mouseup', onMouseUp)
     }
   }, [onSetSplitRatio, space.id])
-
-  if (!currentTab) {
-    return null
-  }
 
   const hotTabs = hotTabIds.map((id) => space.tabs.find((tab) => tab.id === id)).filter((tab): tab is AppTab => Boolean(tab))
   const hotTabsById = new Map(hotTabs.map((tab) => [tab.id, tab]))
@@ -902,19 +905,23 @@ export function Workspace({
   }
 
   useEffect(() => {
+    applyWorkspaceSwipeDeltaRef.current = applyWorkspaceSwipeDelta
+  })
+
+  useEffect(() => {
     const onWorkspaceSwipe = (event: Event) => {
       const detail = (event as CustomEvent<WorkspaceSwipeDetail>).detail
       if (!detail || typeof detail.deltaX !== 'number') {
         return
       }
-      applyWorkspaceSwipeDelta(detail.deltaX, detail.source)
+      applyWorkspaceSwipeDeltaRef.current(detail.deltaX, detail.source)
     }
 
     window.addEventListener('opensmith:workspace-swipe', onWorkspaceSwipe)
     return () => {
       window.removeEventListener('opensmith:workspace-swipe', onWorkspaceSwipe)
     }
-  }, [hasWorkspacePaging, maxGestureOffset, minGestureOffset, pageGestureActive, viewportWidth])
+  }, [])
 
   function onLeafDragOver(event: React.DragEvent<HTMLDivElement>, targetTabId: string) {
     const payload = getCurrentDragPayload(event.dataTransfer)
@@ -1230,6 +1237,10 @@ export function Workspace({
         )}
       </div>
     )
+  }
+
+  if (!currentTab) {
+    return null
   }
 
   const activeZoneDirection = dropPreview?.direction ?? null
