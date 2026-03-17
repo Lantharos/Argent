@@ -1,90 +1,117 @@
 # OpenSmith
 
-> An AI-powered developer environment for the modern era.
+OpenSmith is a desktop coding workspace built with Electron, React, and TypeScript. It combines an AI chat surface, file editor, terminal, browser, and Git tooling into one release-oriented app shell.
 
-OpenSmith is an Electron-based IDE that brings together code editing, terminal, browser, and AI assistance into a unified workspace. Think of it as your all-in-one development environment with deep AI integration.
+![OpenSmith preview](./preview.png)
 
-## Features
+## Status
 
-### Multi-Tab Workspace
+OpenSmith is currently pre-release software and the project is still moving quickly.
 
-- **AI Tab** - Chat with AI assistants, get code suggestions, and more
-- **Editor Tab** - Full-featured code editor with syntax highlighting
-- **Terminal Tab** - Integrated terminal powered by xterm.js
-- **Browser Tab** - Built-in web browser for documentation and research
+This repository is Windows-first today. The codebase includes cross-platform pieces such as Electron and `node-pty`, but macOS and Linux are not currently verified by the maintainer, so those platforms should be treated as experimental until tested by contributors.
 
-### Modern Architecture
+## What It Does
 
-- **Electron** - Cross-platform desktop app foundation
-- **React 19** - UI framework with latest features
-- **TypeScript** - Type-safe codebase
-- **Vite** - Fast build tooling
-- **Bun** - JavaScript runtime and package manager
-- **CodeMirror 6** - Modern code editor
-- **xterm.js** - Terminal emulator
-- **Tailwind CSS v4** - Utility-first styling
-- **electron-store** - Persistent configuration storage
-- **node-pty** - Native terminal support
+- Project spaces backed by local folders
+- AI chat tab with streaming responses, model selection, modes, slash commands, and file/image attachments
+- Built-in editor with file tree, drag-and-drop file moves, save shortcuts, and tab opening
+- Integrated terminal sessions powered by `node-pty` and `xterm.js`
+- Built-in browser tab using Electron `webview`
+- Git tab for status, staging, diffs, commit history, remotes, and sync actions
+- Split-pane workspaces and persistent app state between launches
+
+## Current AI Support
+
+This build currently supports OpenCode ACP in practice.
+
+The codebase contains some compatibility scaffolding for other providers, but the shipped request path currently restricts assistant requests to the built-in `opencode-acp` provider. The README intentionally documents what works now rather than what may arrive later.
+
+## Tech Stack
+
+- Electron
+- React 19
+- TypeScript
+- Vite
+- Bun
+- Tailwind CSS v4
+- CodeMirror 6
+- xterm.js
+- `node-pty`
+
+## Requirements
+
+- [Bun](https://bun.sh/)
+- [Git](https://git-scm.com/) for the Git tab and repository operations
+- [OpenCode CLI](https://opencode.ai/) in `PATH` if you want AI chat to work
 
 ## Getting Started
 
-### Prerequisites
+```bash
+bun install
+```
 
-- [Bun](https://bun.sh) - JavaScript runtime (required)
-- [Electron](https://electronjs.org) - Desktop framework (auto-installed)
-- [GitHub Copilot CLI](https://github.com/github/copilot-cli) - Optional, for Copilot integration
-- [OpenAI Codex](https://openai.com/codex) - Optional, for Codex integration
-- [OpenCode](https://opencode.ai) - Optional, for OpenCode integration
-
-### Installation
+### Run The Full Desktop App
 
 ```bash
-# Install dependencies
-bun install
+bun run dev:desktop
+```
 
-# Start development server
+This starts Vite and Electron together, which is the main development workflow.
+
+### Run Renderer-Only
+
+```bash
 bun run dev
 ```
 
-### Building
+This is useful for frontend work, but Electron-only features such as the filesystem bridge, terminal, Git actions, and AI bridge will not behave like the packaged desktop app.
+
+## Build And Launch
 
 ```bash
-# Build for production
 bun run build
-
-# The built app will be in the dist/ folder
+bun run start:desktop
 ```
+
+`bun run build` creates the renderer bundle in [`dist`](./dist). `bun run start:desktop` launches Electron against that built bundle.
+
+At the moment, this repository does not include installer or distributable packaging scripts yet. It builds the app assets, but not a signed release package.
 
 ## Project Structure
 
 ```text
-opensmith/
-├── electron/           # Electron main process code
-│   ├── ai/            # AI provider integrations
-│   ├── store/         # Persistent storage
-│   └── ...
-├── src/               # React renderer (frontend)
-│   ├── components/    # UI components
-│   ├── hooks/         # React hooks
-│   ├── stores/        # State management
-│   ├── types/         # TypeScript types
-│   └── ...
-├── public/            # Static assets
-├── dist/              # Build output
-└── ...
+.
+|- electron/        Electron main process, IPC, providers, terminal, and Git handlers
+|- public/          Static assets
+|- src/             React renderer and tab UI
+|- dist/            Vite build output
+`- .github/         Issue templates
 ```
 
-## Configuration
+## Notes On Platform Support
 
-OpenSmith stores its configuration locally using `electron-store`. Configuration includes:
+- Windows is the primary environment used during development.
+- macOS support is unverified.
+- Linux support is unverified.
+- If you test and fix platform-specific issues, those contributions are especially valuable.
 
-- AI provider settings (API keys, endpoints)
-- UI preferences
-- Window state (size, position)
+## Data And Configuration
+
+OpenSmith stores app state and provider data under Electron's user data directory in an `opensmith` subfolder. That includes:
+
+- persisted workspace state
+- provider configuration
+- encrypted secrets when Electron `safeStorage` is available on the host system
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit issues or pull requests.
+Contributions are appreciated, especially as the project gets ready for release, but contribution does not guarantee review, feedback, or merge.
+
+Please read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening a pull request.
+
+## Security
+
+If you find a security issue, please read [SECURITY.md](./SECURITY.md) before reporting it.
 
 ## License
 
