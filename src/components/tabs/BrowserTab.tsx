@@ -9,6 +9,7 @@ type BrowserWebview = HTMLElement & {
   goBack: () => void
   goForward: () => void
   reloadIgnoringCache: () => void
+  executeJavaScript: <T>(code: string, userGesture?: boolean) => Promise<T>
 }
 
 type TitleUpdatedEvent = Event & {
@@ -23,6 +24,26 @@ type Props = {
   tab: BrowserTabData
   onChange: (next: BrowserTabData) => void
 }
+
+const SWIPE_CONSOLE_PREFIX = '__opensmith_swipe__:'
+const SWIPE_BRIDGE_SCRIPT = `
+(() => {
+  if (window.__opensmithSwipeBridgeInstalled) {
+    return;
+  }
+  window.__opensmithSwipeBridgeInstalled = true;
+  window.addEventListener('wheel', (event) => {
+    const absX = Math.abs(event.deltaX);
+    const absY = Math.abs(event.deltaY);
+    if (absX <= 0.5 || absX < absY * 0.9) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    console.debug('${SWIPE_CONSOLE_PREFIX}' + String(event.deltaX));
+  }, { capture: true, passive: false });
+})();
+`
 
 function isHttpUrl(value: string): boolean {
   try {
@@ -157,6 +178,7 @@ export function BrowserTab({ tab, onChange }: Props) {
 
     const onDomReady = () => {
       domReadyRef.current = true
+      void withReadyWebview((current) => current.executeJavaScript(SWIPE_BRIDGE_SCRIPT, true))
       syncNavState()
     }
 
@@ -172,12 +194,33 @@ export function BrowserTab({ tab, onChange }: Props) {
       updateTabPatch({ faviconUrl: favicon })
     }
 
+    const onConsoleMessage = (event: Event) => {
+      const candidate = event as Event & { message?: string }
+      const message = candidate.message ?? ''
+      if (!message.startsWith(SWIPE_CONSOLE_PREFIX)) {
+        return
+      }
+
+      const rawDelta = Number.parseFloat(message.slice(SWIPE_CONSOLE_PREFIX.length))
+      if (!Number.isFinite(rawDelta)) {
+        return
+      }
+
+      window.dispatchEvent(new CustomEvent('opensmith:workspace-swipe', {
+        detail: {
+          deltaX: rawDelta,
+          source: 'browser-webview',
+        },
+      }))
+    }
+
     webview.addEventListener('did-navigate', syncNavState)
     webview.addEventListener('did-navigate-in-page', syncNavState)
     webview.addEventListener('did-finish-load', syncNavState)
     webview.addEventListener('page-title-updated', onTitle)
     webview.addEventListener('page-favicon-updated', onFavicon)
     webview.addEventListener('dom-ready', onDomReady)
+    webview.addEventListener('console-message', onConsoleMessage)
 
     return () => {
       webview.removeEventListener('did-navigate', syncNavState)
@@ -186,6 +229,7 @@ export function BrowserTab({ tab, onChange }: Props) {
       webview.removeEventListener('page-title-updated', onTitle)
       webview.removeEventListener('page-favicon-updated', onFavicon)
       webview.removeEventListener('dom-ready', onDomReady)
+      webview.removeEventListener('console-message', onConsoleMessage)
     }
   }, [nonce, safeUrl, updateTabPatch])
 

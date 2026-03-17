@@ -39,6 +39,11 @@ type DropPreview = {
   direction: SplitDirection
 }
 
+type WorkspaceSwipeDetail = {
+  deltaX: number
+  source?: 'browser-webview' | 'workspace'
+}
+
 type LeafBounds = {
   tabId: string
   left: number
@@ -47,8 +52,19 @@ type LeafBounds = {
   bottom: number
 }
 
+type WorkspacePage = {
+  id: string
+  tabIds: string[]
+  primaryTabId: string
+  root: AppTabSplitNode | null
+}
+
 const TAB_DRAG_MIME = 'application/x-opensmith-tab'
 const TAB_DRAG_FALLBACK_PREFIX = 'opensmith-tab:'
+const WORKSPACE_PAGE_SWITCH_THRESHOLD = 0.32
+const WORKSPACE_GESTURE_SETTLE_MS = 180
+const WORKSPACE_FLING_VELOCITY = 1.1
+const BROWSER_SWIPE_EDGE_WIDTH = 28
 
 function areSameIds(a: string[], b: string[]) {
   if (a.length !== b.length) {
@@ -117,6 +133,108 @@ function findGroupByTab(groups: AppTabGroup[] | undefined, tabId: string | null)
       return ids.includes(tabId)
     }) ?? null
   )
+}
+
+function buildWorkspacePages(space: AppSpace): WorkspacePage[] {
+  const groups = space.tabGroups ?? []
+  if (groups.length === 0) {
+    return space.tabs.map((tab) => ({
+      id: `tab:${tab.id}`,
+      tabIds: [tab.id],
+      primaryTabId: tab.id,
+      root: null,
+    }))
+  }
+
+  const groupByTab = new Map<string, AppTabGroup>()
+  for (const group of groups) {
+    const ids: string[] = []
+    collectGroupTabIds(group.root, ids)
+    for (const id of ids) {
+      groupByTab.set(id, group)
+    }
+  }
+
+  const emittedGroups = new Set<string>()
+  const pages: WorkspacePage[] = []
+
+  for (const tab of space.tabs) {
+    const group = groupByTab.get(tab.id)
+    if (!group) {
+      pages.push({
+        id: `tab:${tab.id}`,
+        tabIds: [tab.id],
+        primaryTabId: tab.id,
+        root: null,
+      })
+      continue
+    }
+
+    if (emittedGroups.has(group.id)) {
+      continue
+    }
+
+    const ids: string[] = []
+    collectGroupTabIds(group.root, ids)
+    const groupedTabs = space.tabs.filter((entry) => ids.includes(entry.id))
+    if (groupedTabs.length < 2) {
+      for (const groupedTab of groupedTabs) {
+        pages.push({
+          id: `tab:${groupedTab.id}`,
+          tabIds: [groupedTab.id],
+          primaryTabId: groupedTab.id,
+          root: null,
+        })
+      }
+      emittedGroups.add(group.id)
+      continue
+    }
+
+    pages.push({
+      id: `group:${group.id}`,
+      tabIds: groupedTabs.map((entry) => entry.id),
+      primaryTabId: groupedTabs[0]?.id ?? tab.id,
+      root: group.root,
+    })
+    emittedGroups.add(group.id)
+  }
+
+  return pages
+}
+
+function getPageIndexForTab(pages: WorkspacePage[], tabId: string | null): number {
+  if (!tabId) {
+    return 0
+  }
+
+  const index = pages.findIndex((page) => page.tabIds.includes(tabId))
+  return index >= 0 ? index : 0
+}
+
+function getPreferredPageTabId(space: AppSpace, page: WorkspacePage, fallbackTabId: string | null): string {
+  if (fallbackTabId && page.tabIds.includes(fallbackTabId)) {
+    return fallbackTabId
+  }
+
+  const history = space.tabHistory ?? []
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const id = history[index]
+    if (page.tabIds.includes(id)) {
+      return id
+    }
+  }
+
+  return page.primaryTabId
+}
+
+function applyGestureResistance(offset: number, min: number, max: number): number {
+  if (offset < min) {
+    return min + (offset - min) * 0.28
+  }
+  if (offset > max) {
+    return max + (offset - max) * 0.28
+  }
+  return offset
 }
 
 function resolveDropDirection(clientX: number, clientY: number, rect: DOMRect): SplitDirection | null {
@@ -206,6 +324,15 @@ function RenderPanel({
   )
 }
 
+const splitNodeBaseClass = 'h-full min-h-0 w-full'
+const splitLeafBaseClass = 'relative h-full min-h-0 w-full'
+const splitModeLeafClass = `${splitLeafBaseClass} overflow-hidden rounded-[12px] border border-white/8 bg-black/26 backdrop-blur-2xl transition-all`
+const splitDividerBaseClass = 'shrink-0 z-20 bg-[rgba(170,170,170,0.34)] opacity-0 transition-opacity duration-140'
+const splitDragOverlayClass = 'absolute inset-0 z-[90] pointer-events-none p-2'
+const splitLeafDragOverlayClass = 'absolute inset-0 z-[80] pointer-events-none p-[6px]'
+const splitDragZoneBaseClass = 'absolute pointer-events-auto rounded-[10px] bg-[rgba(110,176,255,0.08)] shadow-[inset_0_0_0_1px_rgba(110,176,255,0.2)] transition-[background,box-shadow] duration-120'
+const splitLeafDragZoneBaseClass = 'absolute pointer-events-auto rounded-[8px] bg-[rgba(255,255,255,0.035)] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.12)] transition-[background,box-shadow] duration-120'
+
 export function Workspace({
   space,
   activeTab,
@@ -222,10 +349,18 @@ export function Workspace({
   const [dropPreview, setDropPreview] = useState<DropPreview | null>(null)
   const [sidebarDragPayload, setSidebarDragPayload] = useState<DragTabPayload | null>(null)
   const [splitRatios, setSplitRatios] = useState<Record<string, number>>({})
+  const [viewportWidth, setViewportWidth] = useState(0)
+  const [pageGestureOffset, setPageGestureOffset] = useState(0)
+  const [pageGestureActive, setPageGestureActive] = useState(false)
   const titlebarVisibleRef = useRef(false)
   const tabLastSeenRef = useRef<Record<string, number>>({})
   const splitLayerRef = useRef<HTMLDivElement | null>(null)
+  const pageViewportRef = useRef<HTMLDivElement | null>(null)
   const splitRatiosRef = useRef<Record<string, number>>({})
+  const pageGestureOffsetRef = useRef(0)
+  const pageGestureTimeoutRef = useRef<number | null>(null)
+  const pageGestureVelocityRef = useRef(0)
+  const pageGestureLastEventAtRef = useRef(0)
   const resizeStateRef = useRef<
     | {
         branchId: string
@@ -240,21 +375,27 @@ export function Workspace({
   >(null)
 
   const currentTab = activeTab
+  const workspacePages = useMemo(() => buildWorkspacePages(space), [space])
+  const currentPageIndex = useMemo(() => getPageIndexForTab(workspacePages, currentTab?.id ?? null), [currentTab?.id, workspacePages])
   const activeGroup = useMemo(() => findGroupByTab(space.tabGroups, currentTab?.id ?? null), [currentTab?.id, space.tabGroups])
   const visibleTabIds = useMemo(() => {
-    if (!currentTab) {
+    if (!currentTab || !workspacePages.length) {
       return []
     }
 
-    if (!activeGroup) {
-      return [currentTab.id]
-    }
-
-    const ids: string[] = []
-    collectGroupTabIds(activeGroup.root, ids)
-    return ids
-  }, [activeGroup, currentTab])
+    const pinnedIndices = new Set([currentPageIndex - 1, currentPageIndex, currentPageIndex + 1])
+    return Array.from(pinnedIndices)
+      .map((index) => workspacePages[index])
+      .filter((page): page is WorkspacePage => Boolean(page))
+      .flatMap((page) => page.tabIds)
+  }, [currentPageIndex, currentTab, workspacePages])
   const isBrowserTab = currentTab?.type === 'browser'
+  const hasWorkspacePaging = workspacePages.length > 1
+  const pageWidth = viewportWidth
+  const pageSpan = pageWidth
+  const pageTrackOffset = viewportWidth > 0 ? -currentPageIndex * pageSpan + pageGestureOffset : 0
+  const minGestureOffset = hasWorkspacePaging && currentPageIndex < workspacePages.length - 1 ? -pageSpan : 0
+  const maxGestureOffset = hasWorkspacePaging && currentPageIndex > 0 ? pageSpan : 0
 
   const shouldKeepTabMounted = useCallback((tab: AppTab) => {
     if (tab.type === 'ai') {
@@ -401,6 +542,11 @@ export function Workspace({
       setTitlebarVisible(nextVisible)
     }
 
+    if (pageGestureActive) {
+      setTitlebar(false)
+      return
+    }
+
     if (currentTab.type === 'browser') {
       setTitlebar(true)
       return
@@ -424,7 +570,7 @@ export function Workspace({
       window.removeEventListener('mousemove', onMouseMove)
       window.removeEventListener('mouseleave', onMouseLeave)
     }
-  }, [currentTab])
+  }, [currentTab, pageGestureActive])
 
   useEffect(() => {
     titlebarVisibleRef.current = titlebarVisible
@@ -438,12 +584,51 @@ export function Workspace({
   }, [])
 
   useEffect(() => {
+    const element = pageViewportRef.current
+    if (!element) {
+      return
+    }
+
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0]
+      if (!entry) {
+        return
+      }
+      setViewportWidth(entry.contentRect.width)
+    })
+    observer.observe(element)
+    setViewportWidth(element.getBoundingClientRect().width)
+
+    return () => observer.disconnect()
+  }, [])
+
+  useEffect(() => {
     const clearPreview = () => setDropPreview(null)
     window.addEventListener('dragend', clearPreview)
     window.addEventListener('drop', clearPreview)
     return () => {
       window.removeEventListener('dragend', clearPreview)
       window.removeEventListener('drop', clearPreview)
+    }
+  }, [])
+
+  useEffect(() => {
+    pageGestureOffsetRef.current = pageGestureOffset
+  }, [pageGestureOffset])
+
+  useEffect(() => {
+    if (!hasWorkspacePaging && pageGestureOffsetRef.current !== 0) {
+      pageGestureOffsetRef.current = 0
+      setPageGestureOffset(0)
+      setPageGestureActive(false)
+    }
+  }, [hasWorkspacePaging])
+
+  useEffect(() => {
+    return () => {
+      if (pageGestureTimeoutRef.current) {
+        window.clearTimeout(pageGestureTimeoutRef.current)
+      }
     }
   }, [])
 
@@ -555,6 +740,125 @@ export function Workspace({
   function getCurrentDragPayload(dataTransfer: DataTransfer | null): DragTabPayload | null {
     return readDragPayload(dataTransfer) ?? sidebarDragPayload
   }
+
+  function finishPageGesture() {
+    if (!hasWorkspacePaging || viewportWidth <= 0) {
+      setPageGestureActive(false)
+      if (pageGestureOffsetRef.current !== 0) {
+        pageGestureOffsetRef.current = 0
+        setPageGestureOffset(0)
+      }
+      return
+    }
+
+    const offset = pageGestureOffsetRef.current
+    const velocity = pageGestureVelocityRef.current
+    let targetIndex = currentPageIndex
+    if (
+      (offset <= -pageSpan * WORKSPACE_PAGE_SWITCH_THRESHOLD || velocity >= WORKSPACE_FLING_VELOCITY)
+      && currentPageIndex < workspacePages.length - 1
+    ) {
+      targetIndex = currentPageIndex + 1
+    } else if (
+      (offset >= pageSpan * WORKSPACE_PAGE_SWITCH_THRESHOLD || velocity <= -WORKSPACE_FLING_VELOCITY)
+      && currentPageIndex > 0
+    ) {
+      targetIndex = currentPageIndex - 1
+    }
+
+    if (targetIndex !== currentPageIndex) {
+      const targetPage = workspacePages[targetIndex]
+      const nextTabId = targetPage ? getPreferredPageTabId(space, targetPage, currentTab?.id ?? null) : null
+      if (nextTabId) {
+        onSelectWorkspaceTab(space.id, nextTabId)
+      }
+    }
+
+    pageGestureOffsetRef.current = 0
+    pageGestureVelocityRef.current = 0
+    pageGestureLastEventAtRef.current = 0
+    setPageGestureOffset(0)
+    setPageGestureActive(false)
+  }
+
+  function schedulePageGestureFinish() {
+    if (pageGestureTimeoutRef.current) {
+      window.clearTimeout(pageGestureTimeoutRef.current)
+    }
+
+    pageGestureTimeoutRef.current = window.setTimeout(() => {
+      finishPageGesture()
+    }, WORKSPACE_GESTURE_SETTLE_MS)
+  }
+
+  function settlePageGestureOnInteraction() {
+    if (!pageGestureActive && pageGestureOffsetRef.current === 0) {
+      return
+    }
+
+    if (pageGestureTimeoutRef.current) {
+      window.clearTimeout(pageGestureTimeoutRef.current)
+      pageGestureTimeoutRef.current = null
+    }
+
+    finishPageGesture()
+  }
+
+  function applyWorkspaceSwipeDelta(deltaX: number) {
+    if (!hasWorkspacePaging || viewportWidth <= 0) {
+      return
+    }
+
+    const now = performance.now()
+    const elapsed = now - pageGestureLastEventAtRef.current
+    pageGestureLastEventAtRef.current = now
+    if (elapsed > 0 && elapsed < 220) {
+      pageGestureVelocityRef.current = deltaX / elapsed
+    } else {
+      pageGestureVelocityRef.current = 0
+    }
+
+    if (!pageGestureActive) {
+      setPageGestureActive(true)
+    }
+
+    const nextOffset = applyGestureResistance(pageGestureOffsetRef.current - deltaX, minGestureOffset, maxGestureOffset)
+    pageGestureOffsetRef.current = nextOffset
+    setPageGestureOffset(nextOffset)
+    schedulePageGestureFinish()
+  }
+
+  function onWorkspaceWheel(event: React.WheelEvent<HTMLDivElement>) {
+    if (!hasWorkspacePaging || viewportWidth <= 0 || event.ctrlKey || event.metaKey) {
+      return
+    }
+
+    const absX = Math.abs(event.deltaX)
+    const absY = Math.abs(event.deltaY)
+    const useHorizontalSwipe = absX > 0.5 && absX >= absY * 0.9
+    if (!useHorizontalSwipe) {
+      return
+    }
+
+    event.preventDefault()
+    event.stopPropagation()
+    applyWorkspaceSwipeDelta(event.deltaX)
+  }
+
+  useEffect(() => {
+    const onWorkspaceSwipe = (event: Event) => {
+      const detail = (event as CustomEvent<WorkspaceSwipeDetail>).detail
+      if (!detail || typeof detail.deltaX !== 'number') {
+        return
+      }
+      applyWorkspaceSwipeDelta(detail.deltaX)
+    }
+
+    window.addEventListener('opensmith:workspace-swipe', onWorkspaceSwipe)
+    return () => {
+      window.removeEventListener('opensmith:workspace-swipe', onWorkspaceSwipe)
+    }
+  }, [hasWorkspacePaging, maxGestureOffset, minGestureOffset, pageGestureActive, viewportWidth])
 
   function onLeafDragOver(event: React.DragEvent<HTMLDivElement>, targetTabId: string) {
     const payload = getCurrentDragPayload(event.dataTransfer)
@@ -706,7 +1010,11 @@ export function Workspace({
     return (
       <div
         data-opensmith-preview-tab-id={tab.id}
-        className={`split-pane-leaf ${splitMode ? 'is-split-mode' : 'is-plain-mode'} ${isActive ? 'is-active' : ''}`}
+        className={
+          splitMode
+            ? `${splitModeLeafClass} ${isActive ? 'border-white/16' : ''}`
+            : splitLeafBaseClass
+        }
         onMouseDown={() => {
           if (space.activeTabId !== tab.id) {
             onSelectWorkspaceTab(space.id, tab.id)
@@ -734,27 +1042,27 @@ export function Workspace({
         }}
       >
         {splitMode && isDragSplitting ? (
-          <div className="split-leaf-drag-overlay" aria-hidden="true">
+          <div className={splitLeafDragOverlayClass} aria-hidden="true">
             <div
-              className={`split-leaf-drag-zone split-leaf-drag-zone-left ${dropPreview?.targetTabId === tab.id && dropPreview?.direction === 'left' ? 'is-active' : ''}`}
+              className={`${splitLeafDragZoneBaseClass} left-2 top-2 bottom-2 w-[18%] ${dropPreview?.targetTabId === tab.id && dropPreview?.direction === 'left' ? 'bg-[rgba(0,120,215,0.22)] shadow-[inset_0_0_0_2px_rgba(0,120,215,0.62),0_0_0_1px_rgba(0,120,215,0.24)]' : ''}`}
               onDragOver={(event) => onLeafZoneDragOver(tab.id, 'left', event)}
               onDragLeave={onOverlayDragLeave}
               onDrop={(event) => onLeafZoneDrop(tab.id, 'left', event)}
             />
             <div
-              className={`split-leaf-drag-zone split-leaf-drag-zone-right ${dropPreview?.targetTabId === tab.id && dropPreview?.direction === 'right' ? 'is-active' : ''}`}
+              className={`${splitLeafDragZoneBaseClass} right-2 top-2 bottom-2 w-[18%] ${dropPreview?.targetTabId === tab.id && dropPreview?.direction === 'right' ? 'bg-[rgba(0,120,215,0.22)] shadow-[inset_0_0_0_2px_rgba(0,120,215,0.62),0_0_0_1px_rgba(0,120,215,0.24)]' : ''}`}
               onDragOver={(event) => onLeafZoneDragOver(tab.id, 'right', event)}
               onDragLeave={onOverlayDragLeave}
               onDrop={(event) => onLeafZoneDrop(tab.id, 'right', event)}
             />
             <div
-              className={`split-leaf-drag-zone split-leaf-drag-zone-top ${dropPreview?.targetTabId === tab.id && dropPreview?.direction === 'top' ? 'is-active' : ''}`}
+              className={`${splitLeafDragZoneBaseClass} left-[20%] right-[20%] top-2 h-[18%] ${dropPreview?.targetTabId === tab.id && dropPreview?.direction === 'top' ? 'bg-[rgba(0,120,215,0.22)] shadow-[inset_0_0_0_2px_rgba(0,120,215,0.62),0_0_0_1px_rgba(0,120,215,0.24)]' : ''}`}
               onDragOver={(event) => onLeafZoneDragOver(tab.id, 'top', event)}
               onDragLeave={onOverlayDragLeave}
               onDrop={(event) => onLeafZoneDrop(tab.id, 'top', event)}
             />
             <div
-              className={`split-leaf-drag-zone split-leaf-drag-zone-bottom ${dropPreview?.targetTabId === tab.id && dropPreview?.direction === 'bottom' ? 'is-active' : ''}`}
+              className={`${splitLeafDragZoneBaseClass} bottom-2 left-[20%] right-[20%] h-[18%] ${dropPreview?.targetTabId === tab.id && dropPreview?.direction === 'bottom' ? 'bg-[rgba(0,120,215,0.22)] shadow-[inset_0_0_0_2px_rgba(0,120,215,0.62),0_0_0_1px_rgba(0,120,215,0.24)]' : ''}`}
               onDragOver={(event) => onLeafZoneDragOver(tab.id, 'bottom', event)}
               onDragLeave={onOverlayDragLeave}
               onDrop={(event) => onLeafZoneDrop(tab.id, 'bottom', event)}
@@ -784,96 +1092,138 @@ export function Workspace({
     const ratio = getSplitRatio(node.id, node.ratio ?? 0.5)
 
     return (
-      <div className={`split-node ${node.orientation === 'vertical' ? 'split-node-vertical' : 'split-node-horizontal'}`}>
-        <div className="split-node-child" style={{ flex: `${ratio} 1 0%` }}>{renderSplitNode(node.first)}</div>
+      <div className={`${splitNodeBaseClass} ${node.orientation === 'vertical' ? 'flex flex-row' : 'flex flex-col'}`}>
+        <div className="min-h-0 min-w-0 flex-1" style={{ flex: `${ratio} 1 0%` }}>{renderSplitNode(node.first)}</div>
         <div
-          className={`split-node-divider ${node.orientation === 'vertical' ? 'split-node-divider-vertical' : 'split-node-divider-horizontal'}`}
+          className={`${splitDividerBaseClass} hover:opacity-100 active:opacity-100 ${node.orientation === 'vertical' ? 'mx-[-4px] w-2 cursor-col-resize' : 'my-[-4px] h-2 cursor-row-resize'}`}
           onMouseDown={(event) => startResizeSplit(event, node.id, node.orientation, ratio)}
         />
-        <div className="split-node-child" style={{ flex: `${1 - ratio} 1 0%` }}>{renderSplitNode(node.second)}</div>
+        <div className="min-h-0 min-w-0 flex-1" style={{ flex: `${1 - ratio} 1 0%` }}>{renderSplitNode(node.second)}</div>
+      </div>
+    )
+  }
+
+  function renderPage(page: WorkspacePage, index: number) {
+    const isCurrentPage = index === currentPageIndex
+    const pageTabId = getPreferredPageTabId(space, page, isCurrentPage ? currentTab?.id ?? null : null)
+
+    return (
+      <div
+        key={page.id}
+        className={`relative h-full min-h-0 shrink-0 ${!isCurrentPage ? 'opacity-[0.999]' : ''}`}
+        style={{ width: `${pageWidth}px` }}
+        aria-hidden={!isCurrentPage}
+      >
+        {page.root ? (
+          <div
+            ref={isCurrentPage ? splitLayerRef : null}
+            className="relative h-full min-h-0 w-full p-1"
+            style={{ animation: 'workspace-fade-in 220ms ease' }}
+            onDragOver={(event) => {
+              const payload = getCurrentDragPayload(event.dataTransfer)
+              if (payload && payload.spaceId === space.id) {
+                event.preventDefault()
+              }
+            }}
+            onDrop={() => setDropPreview(null)}
+          >
+            {renderSplitNode(page.root)}
+          </div>
+        ) : (
+          <div
+            ref={isCurrentPage ? splitLayerRef : null}
+            className="relative h-full min-h-0 w-full"
+            onDragOver={(event) => {
+              const payload = getCurrentDragPayload(event.dataTransfer)
+              if (payload && payload.spaceId === space.id) {
+                event.preventDefault()
+              }
+            }}
+            onDrop={() => setDropPreview(null)}
+          >
+            {renderLeaf(pageTabId, false)}
+            {isCurrentPage && isDragSplitting ? (
+              <div className={splitDragOverlayClass} aria-hidden="true">
+                <div
+                  className={`${splitDragZoneBaseClass} left-2 top-2 bottom-2 w-[24%] ${activeZoneDirection === 'left' ? 'bg-[rgba(0,120,215,0.26)] shadow-[inset_0_0_0_2px_rgba(0,120,215,0.72),0_0_0_1px_rgba(0,120,215,0.3)]' : ''}`}
+                  onDragOver={(event) => onOverlayDragOver('left', event)}
+                  onDragLeave={onOverlayDragLeave}
+                  onDrop={(event) => onOverlayDrop('left', event)}
+                />
+                <div
+                  className={`${splitDragZoneBaseClass} right-2 top-2 bottom-2 w-[24%] ${activeZoneDirection === 'right' ? 'bg-[rgba(0,120,215,0.26)] shadow-[inset_0_0_0_2px_rgba(0,120,215,0.72),0_0_0_1px_rgba(0,120,215,0.3)]' : ''}`}
+                  onDragOver={(event) => onOverlayDragOver('right', event)}
+                  onDragLeave={onOverlayDragLeave}
+                  onDrop={(event) => onOverlayDrop('right', event)}
+                />
+                <div
+                  className={`${splitDragZoneBaseClass} left-[26%] right-[26%] top-2 h-[24%] ${activeZoneDirection === 'top' ? 'bg-[rgba(0,120,215,0.26)] shadow-[inset_0_0_0_2px_rgba(0,120,215,0.72),0_0_0_1px_rgba(0,120,215,0.3)]' : ''}`}
+                  onDragOver={(event) => onOverlayDragOver('top', event)}
+                  onDragLeave={onOverlayDragLeave}
+                  onDrop={(event) => onOverlayDrop('top', event)}
+                />
+                <div
+                  className={`${splitDragZoneBaseClass} bottom-2 left-[26%] right-[26%] h-[24%] ${activeZoneDirection === 'bottom' ? 'bg-[rgba(0,120,215,0.26)] shadow-[inset_0_0_0_2px_rgba(0,120,215,0.72),0_0_0_1px_rgba(0,120,215,0.3)]' : ''}`}
+                  onDragOver={(event) => onOverlayDragOver('bottom', event)}
+                  onDragLeave={onOverlayDragLeave}
+                  onDrop={(event) => onOverlayDrop('bottom', event)}
+                />
+              </div>
+            ) : null}
+          </div>
+        )}
       </div>
     )
   }
 
   const activeZoneDirection = dropPreview?.direction ?? null
+  const workspaceBodyClassName = `relative h-full min-h-0 min-w-0 overflow-hidden ${
+    hasSplitLayout ? 'bg-black/26 backdrop-blur-2xl' : 'bg-[#121212]/80 backdrop-blur-xl'
+  } ${isBrowserTab && !pageGestureActive ? 'bg-transparent backdrop-blur-none' : ''}`
 
   return (
-    <section className={`workspace glass-panel ${titlebarVisible ? 'is-titlebar-visible' : ''} ${isBrowserTab ? 'is-browser-tab' : ''}`}>
-      <div className="workspace-titlebar" />
-      <div className="workspace-content">
-        <div className={`workspace-body ${hasSplitLayout ? 'is-split-layout' : ''} ${isBrowserTab ? 'bg-transparent backdrop-blur-none' : ''}`}>
-          {hasSplitLayout ? (
+    <section className="glass-panel relative flex min-w-0 flex-1 flex-col overflow-hidden bg-transparent">
+      <div
+        className={`absolute left-0 right-0 top-0 z-36 h-9 pointer-events-auto bg-black/26 backdrop-blur-2xl [-webkit-app-region:drag] transition-all duration-180 ${titlebarVisible ? 'translate-y-0 opacity-100' : '-translate-y-full opacity-0'} ${isBrowserTab ? 'pointer-events-none bg-transparent backdrop-blur-none' : ''}`}
+      />
+      <div className={`min-h-0 min-w-0 flex-1 transition-[padding-top] duration-180 ${titlebarVisible && !isBrowserTab ? 'pt-9' : 'pt-0'}`}>
+        <div className={workspaceBodyClassName}>
+          <div
+            ref={pageViewportRef}
+            className="relative h-full min-h-0 min-w-0 w-full overflow-hidden"
+            onWheelCapture={onWorkspaceWheel}
+            onMouseDownCapture={settlePageGestureOnInteraction}
+            onPointerDownCapture={settlePageGestureOnInteraction}
+            onFocusCapture={settlePageGestureOnInteraction}
+          >
             <div
-              ref={splitLayerRef}
-              className="workspace-split-layer is-split-mode"
-              onDragOver={(event) => {
-                const payload = getCurrentDragPayload(event.dataTransfer)
-                if (payload && payload.spaceId === space.id) {
-                  event.preventDefault()
-                }
+              className={`flex h-full min-h-0 items-stretch will-change-transform transition-transform duration-[260ms] [transition-timing-function:cubic-bezier(0.2,0.8,0.2,1)] ${pageGestureActive ? 'transition-none' : ''}`}
+              style={{
+                transform: `translate3d(${pageTrackOffset}px, 0, 0)`,
               }}
-              onDrop={() => setDropPreview(null)}
             >
-              {activeGroup ? renderSplitNode(activeGroup.root) : null}
+              {workspacePages.map(renderPage)}
             </div>
-          ) : (
-            <div
-              ref={splitLayerRef}
-              className="workspace-split-layer is-plain-mode"
-              onDragOver={(event) => {
-                const payload = getCurrentDragPayload(event.dataTransfer)
-                if (payload && payload.spaceId === space.id) {
-                  event.preventDefault()
-                }
-              }}
-              onDrop={() => setDropPreview(null)}
-            >
-              {hotTabs.map((tab) => {
-                const isActive = tab.id === currentTab.id
-                return (
-                  <div
-                    key={tab.id}
-                    className={isActive ? 'h-full min-h-0' : 'absolute inset-0 opacity-0 pointer-events-none'}
-                    aria-hidden={!isActive}
-                  >
-                    {renderLeaf(tab.id, false)}
-                  </div>
-                )
-              })}
-              {isDragSplitting ? (
-                <div className="split-drag-overlay" aria-hidden="true">
-                  <div
-                    className={`split-drag-zone split-drag-zone-left ${activeZoneDirection === 'left' ? 'is-active' : ''}`}
-                    onDragOver={(event) => onOverlayDragOver('left', event)}
-                    onDragLeave={onOverlayDragLeave}
-                    onDrop={(event) => onOverlayDrop('left', event)}
-                  />
-                  <div
-                    className={`split-drag-zone split-drag-zone-right ${activeZoneDirection === 'right' ? 'is-active' : ''}`}
-                    onDragOver={(event) => onOverlayDragOver('right', event)}
-                    onDragLeave={onOverlayDragLeave}
-                    onDrop={(event) => onOverlayDrop('right', event)}
-                  />
-                  <div
-                    className={`split-drag-zone split-drag-zone-top ${activeZoneDirection === 'top' ? 'is-active' : ''}`}
-                    onDragOver={(event) => onOverlayDragOver('top', event)}
-                    onDragLeave={onOverlayDragLeave}
-                    onDrop={(event) => onOverlayDrop('top', event)}
-                  />
-                  <div
-                    className={`split-drag-zone split-drag-zone-bottom ${activeZoneDirection === 'bottom' ? 'is-active' : ''}`}
-                    onDragOver={(event) => onOverlayDragOver('bottom', event)}
-                    onDragLeave={onOverlayDragLeave}
-                    onDrop={(event) => onOverlayDrop('bottom', event)}
-                  />
-                </div>
-              ) : null}
-            </div>
-          )}
+            {isBrowserTab && hasWorkspacePaging ? (
+              <>
+                <div
+                  className="absolute left-0 top-0 bottom-0 z-40 cursor-ew-resize bg-transparent [-webkit-app-region:no-drag]"
+                  style={{ width: `${BROWSER_SWIPE_EDGE_WIDTH}px` }}
+                  onWheelCapture={onWorkspaceWheel}
+                />
+                <div
+                  className="absolute right-0 top-0 bottom-0 z-40 cursor-ew-resize bg-transparent [-webkit-app-region:no-drag]"
+                  style={{ width: `${BROWSER_SWIPE_EDGE_WIDTH}px` }}
+                  onWheelCapture={onWorkspaceWheel}
+                />
+              </>
+            ) : null}
+          </div>
         </div>
       </div>
-      <div className="workspace-titlebar-zone" />
+      <div
+        className={`absolute left-0 right-0 top-0 z-[9999] h-9 bg-transparent [-webkit-app-region:drag] ${titlebarVisible && !isBrowserTab ? 'pointer-events-auto' : 'pointer-events-none'} ${isBrowserTab ? '[-webkit-app-region:no-drag]' : ''}`}
+      />
     </section>
   )
 }
-
