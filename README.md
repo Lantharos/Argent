@@ -85,7 +85,6 @@ At the moment, this repository does not include installer or distributable packa
 |- public/          Static assets
 |- src/             React renderer and tab UI
 |- dist/            Vite build output
-`- .github/         Issue templates
 ```
 
 ## Notes On Platform Support
