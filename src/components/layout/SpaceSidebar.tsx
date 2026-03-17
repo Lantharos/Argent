@@ -809,50 +809,65 @@ export function SpaceSidebar({
                   {entries.map((entry) => {
                     if (entry.type === 'group') {
                       const isGroupActive = isActive && entry.tabs.some((tab) => tab.id === space.activeTabId)
-                      const selectedGroupTabId = isGroupActive ? space.activeTabId : entry.tabs[0]?.id
                       const gridCols = entry.tabs.length >= 4 ? 'grid-cols-2' : entry.tabs.length === 3 ? 'grid-cols-3' : 'grid-cols-2'
 
                       return (
                         <div key={entry.groupId} className={`group relative rounded-xl border transition-all ${isGroupActive ? 'border-white/16 bg-white/8' : 'border-white/8 bg-white/4 hover:bg-white/8 hover:border-white/14'}`}>
                           <div className={`grid ${gridCols} gap-1 p-1`}>
                             {entry.tabs.slice(0, 4).map((tab) => (
-                              <button
+                              <div
                                 key={tab.id}
-                                className={`h-8 rounded-[8px] px-1.5 text-[11px] flex items-center gap-1.5 truncate transition-colors ${isGroupActive ? 'bg-white/12 text-[#f1f1f1]' : 'bg-white/6 text-[#a9a9a9] hover:text-[#dadada]'}`}
-                                onClick={(event) => {
-                                  if (event.altKey) {
-                                    return
-                                  }
-                                  onActivateSpace(space.id)
-                                  if (selectedGroupTabId) {
-                                    onSelectTab(space.id, selectedGroupTabId)
-                                  }
-                                }}
-                                onMouseDown={(event) => {
-                                  if (event.button === 1) {
-                                    event.preventDefault()
-                                    event.stopPropagation()
-                                    onCloseTab(space.id, tab.id)
-                                  }
-                                }}
-                                onAuxClick={(event) => {
-                                  if (event.button === 1) {
-                                    event.preventDefault()
-                                    event.stopPropagation()
-                                  }
-                                }}
-                                draggable
-                                onDragStart={(event) => setTabDragData(event, space.id, tab.id, { requireAlt: true })}
-                                onDragEnd={() => {
-                                  setDragTabPayload(null)
-                                  window.dispatchEvent(new Event('opensmith:tab-drag-end'))
-                                }}
+                                className="group/tab relative"
                                 onDragOver={(event) => event.preventDefault()}
                                 onDrop={() => onTabDrop(space.id, tab.id)}
                               >
-                                <span className="shrink-0">{renderTabIcon(tab)}</span>
-                                <span className="truncate">{tab.title}</span>
-                              </button>
+                                <button
+                                  className={`h-8 w-full rounded-[8px] px-1.5 pr-6 text-[11px] flex items-center gap-1.5 truncate transition-colors text-left ${isGroupActive && space.activeTabId === tab.id ? 'bg-white/12 text-[#f1f1f1]' : 'bg-white/6 text-[#a9a9a9] hover:text-[#dadada]'}`}
+                                  onClick={(event) => {
+                                    if (event.altKey) {
+                                      return
+                                    }
+                                    onActivateSpace(space.id)
+                                    onSelectTab(space.id, tab.id)
+                                  }}
+                                  onMouseDown={(event) => {
+                                    if (event.button === 1) {
+                                      event.preventDefault()
+                                      event.stopPropagation()
+                                      onCloseTab(space.id, tab.id)
+                                    }
+                                  }}
+                                  onAuxClick={(event) => {
+                                    if (event.button === 1) {
+                                      event.preventDefault()
+                                      event.stopPropagation()
+                                    }
+                                  }}
+                                  draggable
+                                  onDragStart={(event) => setTabDragData(event, space.id, tab.id, { requireAlt: true })}
+                                  onDragEnd={() => {
+                                    setDragTabPayload(null)
+                                    window.dispatchEvent(new Event('opensmith:tab-drag-end'))
+                                  }}
+                                >
+                                  <span className="shrink-0">{renderTabIcon(tab)}</span>
+                                  <span className="truncate">{tab.title}</span>
+                                </button>
+
+                                <button
+                                  className="absolute right-1 top-1/2 -translate-y-1/2 rounded-md p-1 text-[#8e8e8e] opacity-0 transition-all hover:bg-white/12 hover:text-white group-hover/tab:opacity-100"
+                                  onClick={(event) => {
+                                    event.preventDefault()
+                                    event.stopPropagation()
+                                    onCloseTab(space.id, tab.id)
+                                  }}
+                                  aria-label={`Close ${tab.title}`}
+                                >
+                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                    <path d="M18 6L6 18M6 6l12 12" />
+                                  </svg>
+                                </button>
+                              </div>
                             ))}
                           </div>
                         </div>
