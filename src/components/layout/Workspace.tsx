@@ -61,13 +61,14 @@ type WorkspacePage = {
 
 const TAB_DRAG_MIME = 'application/x-opensmith-tab'
 const TAB_DRAG_FALLBACK_PREFIX = 'opensmith-tab:'
-const WORKSPACE_PAGE_SWITCH_THRESHOLD = 0.32
-const WORKSPACE_GESTURE_SETTLE_MS = 120
+const WORKSPACE_PAGE_SWITCH_THRESHOLD = 0.24
+const WORKSPACE_PAGE_HARD_COMMIT_THRESHOLD = 0.42
+const WORKSPACE_GESTURE_SETTLE_MS = 160
+const WORKSPACE_GESTURE_MAX_MS = 280
 const WORKSPACE_FLING_VELOCITY = 1.1
+const WORKSPACE_FLING_DISTANCE_RATIO = 0.18
 const WORKSPACE_GESTURE_MIN_DELTA = 1.1
-const WORKSPACE_GESTURE_TAIL_DELTA = 4
 const BROWSER_GESTURE_MIN_DELTA = 0.75
-const BROWSER_GESTURE_TAIL_DELTA = 1.6
 const BROWSER_SWIPE_EDGE_WIDTH = 28
 
 function areSameIds(a: string[], b: string[]) {
@@ -361,11 +362,13 @@ export function Workspace({
   const tabLastSeenRef = useRef<Record<string, number>>({})
   const splitLayerRef = useRef<HTMLDivElement | null>(null)
   const pageViewportRef = useRef<HTMLDivElement | null>(null)
+  const pageTrackRef = useRef<HTMLDivElement | null>(null)
   const splitRatiosRef = useRef<Record<string, number>>({})
   const pageGestureOffsetRef = useRef(0)
   const pageGestureTimeoutRef = useRef<number | null>(null)
   const pageGestureVelocityRef = useRef(0)
   const pageGestureLastEventAtRef = useRef(0)
+  const pageGestureStartedAtRef = useRef(0)
   const resizeStateRef = useRef<
     | {
         branchId: string
@@ -768,14 +771,21 @@ export function Workspace({
 
     const offset = pageGestureOffsetRef.current
     const velocity = pageGestureVelocityRef.current
+    const softCommitDistance = pageSpan * WORKSPACE_PAGE_SWITCH_THRESHOLD
+    const hardCommitDistance = pageSpan * WORKSPACE_PAGE_HARD_COMMIT_THRESHOLD
+    const flingDistance = pageSpan * WORKSPACE_FLING_DISTANCE_RATIO
+    const draggedFarEnoughLeft = offset <= -hardCommitDistance
+    const draggedFarEnoughRight = offset >= hardCommitDistance
+    const flungLeft = offset <= -softCommitDistance && offset <= -flingDistance && velocity >= WORKSPACE_FLING_VELOCITY
+    const flungRight = offset >= softCommitDistance && offset >= flingDistance && velocity <= -WORKSPACE_FLING_VELOCITY
     let targetIndex = activePageIndex
     if (
-      (offset <= -pageSpan * WORKSPACE_PAGE_SWITCH_THRESHOLD || velocity >= WORKSPACE_FLING_VELOCITY)
+      (draggedFarEnoughLeft || flungLeft)
       && activePageIndex < workspacePages.length - 1
     ) {
       targetIndex = activePageIndex + 1
     } else if (
-      (offset >= pageSpan * WORKSPACE_PAGE_SWITCH_THRESHOLD || velocity <= -WORKSPACE_FLING_VELOCITY)
+      (draggedFarEnoughRight || flungRight)
       && activePageIndex > 0
     ) {
       targetIndex = activePageIndex - 1
@@ -793,6 +803,7 @@ export function Workspace({
     pageGestureOffsetRef.current = 0
     pageGestureVelocityRef.current = 0
     pageGestureLastEventAtRef.current = 0
+    pageGestureStartedAtRef.current = 0
     setPageGestureOffset(0)
     setPageGestureActive(false)
   }
@@ -805,6 +816,25 @@ export function Workspace({
     pageGestureTimeoutRef.current = window.setTimeout(() => {
       finishPageGesture()
     }, delay)
+  }
+
+  function syncGestureOffsetToRenderedTrack() {
+    const track = pageTrackRef.current
+    if (!track || viewportWidth <= 0) {
+      return
+    }
+
+    const computedTransform = window.getComputedStyle(track).transform
+    if (!computedTransform || computedTransform === 'none') {
+      return
+    }
+
+    const matrix = new DOMMatrixReadOnly(computedTransform)
+    const renderedTranslateX = matrix.m41
+    const baseTranslateX = -activePageIndex * pageSpan
+    const renderedOffset = renderedTranslateX - baseTranslateX
+    pageGestureOffsetRef.current = renderedOffset
+    setPageGestureOffset(renderedOffset)
   }
 
   function settlePageGestureOnInteraction() {
@@ -826,7 +856,6 @@ export function Workspace({
     }
 
     const minDelta = source === 'browser-webview' ? BROWSER_GESTURE_MIN_DELTA : WORKSPACE_GESTURE_MIN_DELTA
-    const tailDelta = source === 'browser-webview' ? BROWSER_GESTURE_TAIL_DELTA : WORKSPACE_GESTURE_TAIL_DELTA
     const absDelta = Math.abs(deltaX)
     if (absDelta < minDelta) {
       return
@@ -842,13 +871,17 @@ export function Workspace({
     }
 
     if (!pageGestureActive) {
+      syncGestureOffsetToRenderedTrack()
+      pageGestureStartedAtRef.current = now
       setPageGestureActive(true)
     }
 
     const nextOffset = applyGestureResistance(pageGestureOffsetRef.current - deltaX, minGestureOffset, maxGestureOffset)
     pageGestureOffsetRef.current = nextOffset
     setPageGestureOffset(nextOffset)
-    schedulePageGestureFinish(absDelta < tailDelta ? 72 : WORKSPACE_GESTURE_SETTLE_MS)
+    const gestureAge = pageGestureStartedAtRef.current > 0 ? now - pageGestureStartedAtRef.current : 0
+    const remainingLifetime = Math.max(40, WORKSPACE_GESTURE_MAX_MS - gestureAge)
+    schedulePageGestureFinish(Math.min(WORKSPACE_GESTURE_SETTLE_MS, remainingLifetime))
   }
 
   function onWorkspaceWheel(event: React.WheelEvent<HTMLDivElement>) {
@@ -1220,6 +1253,7 @@ export function Workspace({
             onFocusCapture={settlePageGestureOnInteraction}
           >
             <div
+              ref={pageTrackRef}
               className={`flex h-full min-h-0 items-stretch will-change-transform transition-transform duration-[180ms] [transition-timing-function:cubic-bezier(0.2,0.8,0.2,1)] ${pageGestureActive ? 'transition-none' : ''}`}
               style={{
                 transform: `translate3d(${pageTrackOffset}px, 0, 0)`,
