@@ -6,7 +6,7 @@ function on(channel, callback) {
   return () => ipcRenderer.removeListener(channel, handler)
 }
 
-contextBridge.exposeInMainWorld('opensmith', {
+contextBridge.exposeInMainWorld('argent', {
   git: {
     checkInstalled: () => ipcRenderer.invoke('git:check-installed'),
     exec: (opts) => ipcRenderer.invoke('git:exec', opts),

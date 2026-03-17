@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { BrowserTabData } from '../../types/opensmith'
+import type { BrowserTabData } from '../../types/argent'
 
 type BrowserWebview = HTMLElement & {
   getURL: () => string
@@ -25,13 +25,13 @@ type Props = {
   onChange: (next: BrowserTabData) => void
 }
 
-const SWIPE_CONSOLE_PREFIX = '__opensmith_swipe__:'
+const SWIPE_CONSOLE_PREFIX = '__argent_swipe__:'
 const SWIPE_BRIDGE_SCRIPT = `
 (() => {
-  if (window.__opensmithSwipeBridgeInstalled) {
+  if (window.__argentSwipeBridgeInstalled) {
     return;
   }
-  window.__opensmithSwipeBridgeInstalled = true;
+  window.__argentSwipeBridgeInstalled = true;
   window.addEventListener('wheel', (event) => {
     const absX = Math.abs(event.deltaX);
     const absY = Math.abs(event.deltaY);
@@ -206,7 +206,7 @@ export function BrowserTab({ tab, onChange }: Props) {
         return
       }
 
-      window.dispatchEvent(new CustomEvent('opensmith:workspace-swipe', {
+      window.dispatchEvent(new CustomEvent('argent:workspace-swipe', {
         detail: {
           deltaX: rawDelta,
           source: 'browser-webview',
@@ -319,7 +319,7 @@ export function BrowserTab({ tab, onChange }: Props) {
             domReadyRef.current = false
           }}
           src={safeUrl}
-          partition="persist:opensmith-browser"
+          partition="persist:argent-browser"
           style={{ width: '100%', height: '100%' }}
         />
       </div>

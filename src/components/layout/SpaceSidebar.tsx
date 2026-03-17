@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Ellipsis, Loader2 } from 'lucide-react'
-import type { AppSpace, AppTab, AppTabGroup, AppTabSplitNode, AppTabType } from '../../types/opensmith'
+import type { AppSpace, AppTab, AppTabGroup, AppTabSplitNode, AppTabType } from '../../types/argent'
 
 type Props = {
   spaces: AppSpace[]
@@ -33,8 +33,8 @@ type SidebarEntry =
   | { type: 'tab'; tab: AppTab }
   | { type: 'group'; groupId: string; tabs: AppTab[] }
 
-const TAB_DRAG_MIME = 'application/x-opensmith-tab'
-const TAB_DRAG_FALLBACK_PREFIX = 'opensmith-tab:'
+const TAB_DRAG_MIME = 'application/x-argent-tab'
+const TAB_DRAG_FALLBACK_PREFIX = 'argent-tab:'
 
 function defaultTabTitle(type: AppTabType) {
   if (type === 'ai') return 'AI Chat'
@@ -365,7 +365,7 @@ export function SpaceSidebar({
     event.dataTransfer.setData('text/plain', `${TAB_DRAG_FALLBACK_PREFIX}${spaceId}:${tabId}`)
     event.dataTransfer.effectAllowed = 'move'
     setDragTabPayload({ spaceId, tabId })
-    window.dispatchEvent(new CustomEvent('opensmith:tab-drag-start', { detail: { spaceId, tabId } }))
+    window.dispatchEvent(new CustomEvent('argent:tab-drag-start', { detail: { spaceId, tabId } }))
   }
 
   function commitTabRename(spaceId: string, tabId: string, fallbackType: AppTabType) {
@@ -392,7 +392,7 @@ export function SpaceSidebar({
   }
 
   function signalUiInteraction() {
-    window.dispatchEvent(new Event('opensmith:ui-interaction'))
+    window.dispatchEvent(new Event('argent:ui-interaction'))
   }
 
   function openSpaceMenuAt(spaceId: string, x: number, y: number) {
@@ -531,7 +531,7 @@ export function SpaceSidebar({
       onContextMenuCapture={signalUiInteraction}
     >
       <div className="flex items-center justify-between px-2">
-        <div className="text-sm font-semibold text-[#d0d0d0] tracking-wide">OpenSmith</div>
+        <div className="text-sm font-semibold text-[#d0d0d0] tracking-wide">Argent</div>
         <button
           ref={addSpaceButtonRef}
           className="text-[12px] text-[#9a9a9a] hover:text-[#e0e0e0] px-2 py-1 rounded-md cursor-pointer transition-colors hover:bg-white/8 outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-0"
@@ -768,7 +768,7 @@ export function SpaceSidebar({
                           onDragStart={(event) => setTabDragData(event, space.id, tab.id, { requireAlt: true })}
                           onDragEnd={() => {
                             setDragTabPayload(null)
-                            window.dispatchEvent(new Event('opensmith:tab-drag-end'))
+                            window.dispatchEvent(new Event('argent:tab-drag-end'))
                           }}
                         >
                           <span className="shrink-0">{renderTabIcon(tab)}</span>
@@ -847,7 +847,7 @@ export function SpaceSidebar({
                                   onDragStart={(event) => setTabDragData(event, space.id, tab.id, { requireAlt: true })}
                                   onDragEnd={() => {
                                     setDragTabPayload(null)
-                                    window.dispatchEvent(new Event('opensmith:tab-drag-end'))
+                                    window.dispatchEvent(new Event('argent:tab-drag-end'))
                                   }}
                                 >
                                   <span className="shrink-0">{renderTabIcon(tab)}</span>
@@ -908,7 +908,7 @@ export function SpaceSidebar({
                             onDragStart={(event) => setTabDragData(event, space.id, tab.id)}
                             onDragEnd={() => {
                               setDragTabPayload(null)
-                              window.dispatchEvent(new Event('opensmith:tab-drag-end'))
+                              window.dispatchEvent(new Event('argent:tab-drag-end'))
                             }}
                             onMouseDown={(event) => {
                               if (event.button === 1) {

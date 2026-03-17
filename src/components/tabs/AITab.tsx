@@ -18,7 +18,7 @@ import {
 } from 'lucide-react'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
-import type { AITabData, AIStreamEvent, PromptAttachment, ProviderConfig } from '../../types/opensmith'
+import type { AITabData, AIStreamEvent, PromptAttachment, ProviderConfig } from '../../types/argent'
 import { extractModelMeta, ProviderGlyph } from './providerIcon'
 
 type Props = {
@@ -843,7 +843,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
   )
 
   useEffect(() => {
-    const unsubscribe = window.opensmith.ai.onStreamEvent((payload) => {
+    const unsubscribe = window.argent.ai.onStreamEvent((payload) => {
       if (payload.requestId !== activeRequestIdRef.current) {
         return
       }
@@ -975,7 +975,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
         }
 
         if (selectedProvider?.id && event.reply?.id) {
-          void window.opensmith.ai
+          void window.argent.ai
             .listModes({
               providerId: selectedProvider.id,
               cwd,
@@ -1119,7 +1119,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
       })
 
       if (staleRequestId) {
-        void window.opensmith.ai.streamCancel({ requestId: staleRequestId }).catch(() => {
+        void window.argent.ai.streamCancel({ requestId: staleRequestId }).catch(() => {
           // no-op
         })
       }
@@ -1189,7 +1189,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
       try {
         let inflight = sharedModelOptionsInflight.get(providerId)
         if (!inflight) {
-          inflight = window.opensmith.ai
+          inflight = window.argent.ai
             .listModels({ providerId, cwd })
             .then((models) => {
               if (models.length > 0) {
@@ -1245,7 +1245,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
       }
 
       try {
-        const modeState = await window.opensmith.ai.listModes({
+        const modeState = await window.argent.ai.listModes({
           providerId: selectedProvider.id,
           cwd,
           sessionId: tabRef.current.acpSessionId || undefined,
@@ -1299,7 +1299,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
       try {
         let inflight = sharedCommandOptionsInflight.get(inflightKey)
         if (!inflight) {
-          inflight = window.opensmith.ai
+          inflight = window.argent.ai
             .listCommands({
               providerId,
               cwd,
@@ -1361,7 +1361,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
   }, [updateTab])
 
   async function addFileAttachment() {
-    const picked = await window.opensmith.fs.openFile(null)
+    const picked = await window.argent.fs.openFile(null)
     if (!picked) {
       return
     }
@@ -1549,7 +1549,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
           (msg.role === 'user' || msg.role === 'assistant') && msg.content.length > 0,
       )
 
-      const streamStart = await window.opensmith.ai.streamStart({
+      const streamStart = await window.argent.ai.streamStart({
         providerId: provider.id,
         messages: usable,
         cwd,
@@ -1566,7 +1566,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
           isGenerating: false,
         }))
         try {
-          await window.opensmith.ai.streamCancel({ requestId: streamStart.requestId })
+          await window.argent.ai.streamCancel({ requestId: streamStart.requestId })
         } catch {
           // no-op
         }
@@ -1699,7 +1699,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
           (msg.role === 'user' || msg.role === 'assistant') && msg.content.length > 0,
       )
 
-      const streamStart = await window.opensmith.ai.streamStart({
+      const streamStart = await window.argent.ai.streamStart({
         providerId: selectedProvider.id,
         messages: usable,
         cwd,
@@ -1716,7 +1716,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
           isGenerating: false,
         }))
         try {
-          await window.opensmith.ai.streamCancel({ requestId: streamStart.requestId })
+          await window.argent.ai.streamCancel({ requestId: streamStart.requestId })
         } catch {
           // no-op
         }
@@ -1809,7 +1809,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
     activeRequestIdRef.current = null
 
     try {
-      await window.opensmith.ai.streamCancel({ requestId })
+      await window.argent.ai.streamCancel({ requestId })
     } catch {
       // no-op
     }
@@ -1826,7 +1826,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
         {!opencodeInstalled ? (
           <div className="w-full max-w-[760px] mx-auto mt-8 rounded-2xl border border-[#3a2f21] bg-[#1a140e] px-4 py-3 text-[#d6b796]">
             <div className="text-[14px] font-semibold text-[#e8c89f]">OpenCode CLI required</div>
-            <p className="mt-1 mb-0 text-[13px] text-[#d2b08a]">Install OpenCode CLI and ensure `opencode` is available in PATH. Then restart OpenSmith.</p>
+            <p className="mt-1 mb-0 text-[13px] text-[#d2b08a]">Install OpenCode CLI and ensure `opencode` is available in PATH. Then restart Argent.</p>
             <p className="mt-1 mb-0 text-[12px] text-[#b8926f]">Command: `bun add -g opencode-ai` or your preferred install method from opencode.ai/docs.</p>
           </div>
         ) : null}
@@ -2160,7 +2160,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
                   void handleSend()
                 }
               }}
-              placeholder={opencodeInstalled ? 'Ask OpenSmith anything, @ to add files, / for commands' : 'Install OpenCode CLI to enable AI chat'}
+              placeholder={opencodeInstalled ? 'Ask Argent anything, @ to add files, / for commands' : 'Install OpenCode CLI to enable AI chat'}
               rows={3}
             />
 
@@ -2235,7 +2235,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
                                   return
                                 }
 
-                                void window.opensmith.ai
+                                void window.argent.ai
                                   .setMode({
                                     providerId: selectedProvider.id,
                                     cwd,

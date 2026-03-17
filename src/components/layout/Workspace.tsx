@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import type { AppSpace, AppTab, AppTabGroup, AppTabSplitNode, PromptAttachment, ProviderConfig } from '../../types/opensmith'
+import type { AppSpace, AppTab, AppTabGroup, AppTabSplitNode, PromptAttachment, ProviderConfig } from '../../types/argent'
 import { TabRenderer } from '../../tabs/TabRenderer'
 
 const HOT_TAB_LIMIT = 6
@@ -59,8 +59,8 @@ type WorkspacePage = {
   root: AppTabSplitNode | null
 }
 
-const TAB_DRAG_MIME = 'application/x-opensmith-tab'
-const TAB_DRAG_FALLBACK_PREFIX = 'opensmith-tab:'
+const TAB_DRAG_MIME = 'application/x-argent-tab'
+const TAB_DRAG_FALLBACK_PREFIX = 'argent-tab:'
 const WORKSPACE_PAGE_SWITCH_THRESHOLD = 0.24
 const WORKSPACE_PAGE_HARD_COMMIT_THRESHOLD = 0.42
 const WORKSPACE_GESTURE_SETTLE_MS = 160
@@ -596,12 +596,12 @@ export function Workspace({
 
   useEffect(() => {
     titlebarVisibleRef.current = titlebarVisible
-    void window.opensmith.window.setNativeControlsVisible(titlebarVisible)
+    void window.argent.window.setNativeControlsVisible(titlebarVisible)
   }, [titlebarVisible])
 
   useEffect(() => {
     return () => {
-      void window.opensmith.window.setNativeControlsVisible(false)
+      void window.argent.window.setNativeControlsVisible(false)
     }
   }, [])
 
@@ -671,14 +671,14 @@ export function Workspace({
       setDropPreview(null)
     }
 
-    window.addEventListener('opensmith:tab-drag-start', onDragStart as EventListener)
-    window.addEventListener('opensmith:tab-drag-end', onDragEnd)
+    window.addEventListener('argent:tab-drag-start', onDragStart as EventListener)
+    window.addEventListener('argent:tab-drag-end', onDragEnd)
     window.addEventListener('dragend', onDragEnd)
     window.addEventListener('drop', onDragEnd)
 
     return () => {
-      window.removeEventListener('opensmith:tab-drag-start', onDragStart as EventListener)
-      window.removeEventListener('opensmith:tab-drag-end', onDragEnd)
+      window.removeEventListener('argent:tab-drag-start', onDragStart as EventListener)
+      window.removeEventListener('argent:tab-drag-end', onDragEnd)
       window.removeEventListener('dragend', onDragEnd)
       window.removeEventListener('drop', onDragEnd)
     }
@@ -917,9 +917,9 @@ export function Workspace({
       applyWorkspaceSwipeDeltaRef.current(detail.deltaX, detail.source)
     }
 
-    window.addEventListener('opensmith:workspace-swipe', onWorkspaceSwipe)
+    window.addEventListener('argent:workspace-swipe', onWorkspaceSwipe)
     return () => {
-      window.removeEventListener('opensmith:workspace-swipe', onWorkspaceSwipe)
+      window.removeEventListener('argent:workspace-swipe', onWorkspaceSwipe)
     }
   }, [])
 
@@ -1072,7 +1072,7 @@ export function Workspace({
     const isActive = currentTab?.id === tab.id
     return (
       <div
-        data-opensmith-preview-tab-id={tab.id}
+        data-argent-preview-tab-id={tab.id}
         className={
           splitMode
             ? `${splitModeLeafClass} ${isActive ? 'border-white/16' : ''}`

@@ -1,6 +1,6 @@
 # Security Policy
 
-If you believe you have found a security vulnerability in OpenSmith, please avoid posting full exploit details in a public issue right away.
+If you believe you have found a security vulnerability in Argent, please avoid posting full exploit details in a public issue right away.
 
 ## Reporting
 
@@ -20,7 +20,7 @@ Please include:
 
 ## Scope Notes
 
-OpenSmith is pre-release software. Reports are still very helpful, especially around:
+Argent is pre-release software. Reports are still very helpful, especially around:
 
 - Electron or `webview` boundary issues
 - filesystem access issues

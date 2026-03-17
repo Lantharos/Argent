@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 export function getDataDir() {
-  const dir = path.join(app.getPath('userData'), 'opensmith')
+  const dir = path.join(app.getPath('userData'), 'argent')
   fs.mkdirSync(dir, { recursive: true })
   return dir
 }

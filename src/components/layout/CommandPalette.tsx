@@ -14,7 +14,7 @@ import {
   TerminalSquare,
   X,
 } from 'lucide-react'
-import type { AppSpace, AppTab, AppTabType } from '../../types/opensmith'
+import type { AppSpace, AppTab, AppTabType } from '../../types/argent'
 
 type CommandPaletteItem = {
   id: string
@@ -176,7 +176,7 @@ export function CommandPalette({ spaces, activeSpaceId, onCreateTab, onSelectTab
   }, [open])
 
   useEffect(() => {
-    return window.opensmith.app.onOpenCommandPalette(() => {
+    return window.argent.app.onOpenCommandPalette(() => {
       openPalette()
     })
   }, [])

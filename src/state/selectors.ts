@@ -1,4 +1,4 @@
-import type { AppSnapshot, AppSpace, AppTab } from '../types/opensmith'
+import type { AppSnapshot, AppSpace, AppTab } from '../types/argent'
 
 export function getActiveSpace(state: AppSnapshot): AppSpace | null {
   if (!state.activeSpaceId) {

@@ -3,7 +3,7 @@ import CodeMirror from '@uiw/react-codemirror'
 import { javascript } from '@codemirror/lang-javascript'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { ChevronRight, ChevronDown, File, Folder, FolderOpen, PanelLeft } from 'lucide-react'
-import type { EditorTabData } from '../../types/opensmith'
+import type { EditorTabData } from '../../types/argent'
 
 type Props = {
   tab: EditorTabData
@@ -36,14 +36,14 @@ function FileTreeItem({ node, currentFilePath, onSelect, onSelectInNewTab, onCon
 
   useEffect(() => {
     if (isOpen && node.isDirectory) {
-      window.opensmith.fs.readDir(node.path).then(setChildren)
+      window.argent.fs.readDir(node.path).then(setChildren)
     }
   }, [isOpen, refreshCount, node.path, node.isDirectory])
 
   const toggle = async (event: React.MouseEvent<HTMLDivElement>) => {
     if (node.isDirectory) {
       if (!isOpen && children.length === 0) {
-        const kids = await window.opensmith.fs.readDir(node.path)
+        const kids = await window.argent.fs.readDir(node.path)
         setChildren(kids)
       }
       setIsOpen(!isOpen)
@@ -159,12 +159,12 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
 
     document.addEventListener('mousedown', closeWhenOutside, true)
     document.addEventListener('contextmenu', closeWhenOutside, true)
-    window.addEventListener('opensmith:ui-interaction', closeFromUiInteraction)
+    window.addEventListener('argent:ui-interaction', closeFromUiInteraction)
 
     return () => {
       document.removeEventListener('mousedown', closeWhenOutside, true)
       document.removeEventListener('contextmenu', closeWhenOutside, true)
-      window.removeEventListener('opensmith:ui-interaction', closeFromUiInteraction)
+      window.removeEventListener('argent:ui-interaction', closeFromUiInteraction)
     }
   }, [])
 
@@ -224,7 +224,7 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
   }
 
   async function handleDelete(node: FileNode) {
-    await window.opensmith.fs.delete(node.path)
+    await window.argent.fs.delete(node.path)
     if (clipboard?.path === node.path) setClipboard(null)
     setRefreshCount(c => c + 1)
     setMenu(null)
@@ -235,7 +235,7 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
     const fileName = sourcePath.split(/[/\\]/).pop()!
     const dest = `${destDir}/${fileName}`
     if (sourcePath !== dest) {
-      await window.opensmith.fs.move(sourcePath, dest)
+      await window.argent.fs.move(sourcePath, dest)
       setRefreshCount(c => c + 1)
     }
   }
@@ -246,10 +246,10 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
     const fileName = clipboard.path.split(/[/\\]/).pop()!
     const dest = `${destDir}/${fileName}`
     if (clipboard.type === 'cut') {
-      await window.opensmith.fs.move(clipboard.path, dest)
+      await window.argent.fs.move(clipboard.path, dest)
       setClipboard(null)
     } else {
-      await window.opensmith.fs.copy(clipboard.path, dest)
+      await window.argent.fs.copy(clipboard.path, dest)
     }
     setRefreshCount(c => c + 1)
     setMenu(null)
@@ -280,14 +280,14 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
   }
 
   useEffect(() => {
-    window.opensmith.fs.readDir(cwd).then(nodes => {
+    window.argent.fs.readDir(cwd).then(nodes => {
       setRootNodes(nodes)
     })
   }, [cwd, refreshCount])
 
   async function handleSelectFile(node: FileNode) {
     if (node.isDirectory) return
-    const content = await window.opensmith.fs.readFile(node.path)
+    const content = await window.argent.fs.readFile(node.path)
     onChange({
       ...tab,
       filePath: node.path,
@@ -302,7 +302,7 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
       return
     }
 
-    const content = await window.opensmith.fs.readFile(node.path)
+    const content = await window.argent.fs.readFile(node.path)
     const title = node.name || node.path.split(/[/\\]/).at(-1) || 'Editor'
 
     if (onOpenInNewTab) {
@@ -324,12 +324,12 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
   }
 
   async function openFile() {
-    const filePath = await window.opensmith.fs.openFile(cwd)
+    const filePath = await window.argent.fs.openFile(cwd)
     if (!filePath) {
       return
     }
 
-    const content = await window.opensmith.fs.readFile(filePath)
+    const content = await window.argent.fs.readFile(filePath)
     onChange({
       ...tab,
       filePath,
@@ -343,7 +343,7 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
     if (!tab.filePath) {
       return
     }
-    await window.opensmith.fs.saveFile(tab.filePath, tab.content)
+    await window.argent.fs.saveFile(tab.filePath, tab.content)
     onChange({ ...tab, dirty: false })
   }, [onChange, tab])
 

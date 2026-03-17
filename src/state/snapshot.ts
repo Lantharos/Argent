@@ -1,4 +1,4 @@
-import type { AppSnapshot, AppSpace } from '../types/opensmith'
+import type { AppSnapshot, AppSpace } from '../types/argent'
 import { createId } from './ids'
 import { createTab } from './tabFactory'
 

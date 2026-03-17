@@ -1,4 +1,4 @@
-import type { AppSpace, AppTabType } from '../../types/opensmith'
+import type { AppSpace, AppTabType } from '../../types/argent'
 
 type Props = {
   space: AppSpace

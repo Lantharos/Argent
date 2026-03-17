@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useReducer, useState } from 'react'
 import { Loader2 } from 'lucide-react'
-import type { AppSnapshot, AppTab, AppTabType, PromptAttachment, ProviderConfig } from './types/opensmith'
+import type { AppSnapshot, AppTab, AppTabType, PromptAttachment, ProviderConfig } from './types/argent'
 import { appReducer } from './state/reducer'
 import { defaultSnapshot, createGlobalSpace, createSpace } from './state/snapshot'
 import { getActiveSpace, getTab } from './state/selectors'
@@ -23,16 +23,16 @@ function App() {
 
   useEffect(() => {
     async function boot() {
-      if (!window.opensmith?.app) {
+      if (!window.argent?.app) {
         setBridgeReady(false)
         setLoaded(true)
         return
       }
 
       const [snapshot, providerList, homePath] = await Promise.all([
-        window.opensmith.app.loadState(),
-        window.opensmith.providers.list(),
-        window.opensmith.app.getHomeDirectory(),
+        window.argent.app.loadState(),
+        window.argent.providers.list(),
+        window.argent.app.getHomeDirectory(),
       ])
       dispatch({ type: 'replace', value: snapshot as AppSnapshot })
       setProviders(providerList)
@@ -49,14 +49,14 @@ function App() {
     }
 
     const id = setTimeout(() => {
-      void window.opensmith.app.saveState(state)
+      void window.argent.app.saveState(state)
     }, 180)
 
     return () => clearTimeout(id)
   }, [loaded, state])
 
   async function addSpaceFromFolder() {
-    const folder = await window.opensmith.app.chooseFolder()
+    const folder = await window.argent.app.chooseFolder()
     if (!folder) {
       return false
     }
@@ -67,7 +67,7 @@ function App() {
   }
 
   async function addEmptySpace() {
-    const fallbackHome = await window.opensmith.app.getHomeDirectory()
+    const fallbackHome = await window.argent.app.getHomeDirectory()
     const space = createGlobalSpace(homeDirectory || fallbackHome)
     dispatch({ type: 'add-space', space })
     return true
@@ -78,12 +78,12 @@ function App() {
   }
 
   async function cloneRepoToSpace(repoUrl: string, selectedParentDir?: string) {
-    const parentDir = selectedParentDir || await window.opensmith.app.chooseFolder()
+    const parentDir = selectedParentDir || await window.argent.app.chooseFolder()
     if (!parentDir) {
       return { success: false, error: 'Select a destination folder to clone into.', parentDir: null, authRequired: false }
     }
 
-    const result = await window.opensmith.git.clone({ repoUrl, parentDir })
+    const result = await window.argent.git.clone({ repoUrl, parentDir })
     if (!result.success || !result.path) {
       const details = `${result.error || ''}\n${result.stderr || ''}\n${result.stdout || ''}`
       return {
@@ -185,7 +185,7 @@ function App() {
     model?: string,
     attachments?: PromptAttachment[],
   ) {
-    const reply = await window.opensmith.ai.sendMessage({ providerId, messages, cwd, model, attachments })
+    const reply = await window.argent.ai.sendMessage({ providerId, messages, cwd, model, attachments })
     return reply.content
   }
 
@@ -226,7 +226,7 @@ function App() {
     return (
       <div className="grid min-h-screen place-items-center bg-transparent">
         <p className="text-center text-sm text-[#cfcfcf]">
-          It seems like the OpenSmith bridge is not available. Please make sure you are running this app within the OpenSmith environment.
+          It seems like the Argent bridge is not available. Please make sure you are running this app within the Argent environment.
         </p>
       </div>
     )
@@ -248,7 +248,7 @@ function App() {
           if (!target) {
             return Promise.resolve(false)
           }
-          return window.opensmith.app.openInExplorer(target.rootPath)
+          return window.argent.app.openInExplorer(target.rootPath)
         }}
         onAddTab={(spaceId: string, tabType: AppTabType) => {
           dispatch({ type: 'add-tab', spaceId, tabType })

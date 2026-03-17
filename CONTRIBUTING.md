@@ -1,4 +1,4 @@
-# Contributing To OpenSmith
+# Contributing To Argent
 
 Thanks for taking the time to contribute.
 

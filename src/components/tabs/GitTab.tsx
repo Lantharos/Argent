@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertCircle,
   AlertTriangle,
@@ -16,7 +16,7 @@ import {
   RefreshCw,
   X,
 } from 'lucide-react'
-import type { GitTabData } from '../../types/opensmith'
+import type { GitTabData } from '../../types/argent'
 
 type Props = {
   tab: GitTabData
@@ -371,7 +371,7 @@ export function GitTab({ tab, isActive }: Props) {
 
     setHistoryLoading(true)
     try {
-      const res = await window.opensmith.git.exec({
+      const res = await window.argent.git.exec({
         cwd: tab.cwd,
         args: ['log', '--date=iso-strict', '--pretty=format:%H%x1f%h%x1f%an%x1f%aI%x1f%s%x1e', '-n', '80'],
       })
@@ -392,7 +392,7 @@ export function GitTab({ tab, isActive }: Props) {
       setSelectedCommitHash(nextHash)
 
       if (nextHash) {
-        const showRes = await window.opensmith.git.exec({
+        const showRes = await window.argent.git.exec({
           cwd: tab.cwd,
           args: [
             'show',
@@ -423,7 +423,7 @@ export function GitTab({ tab, isActive }: Props) {
   const loadPendingPush = useCallback(async () => {
     if (!installed) return
 
-    const res = await window.opensmith.git.exec({
+    const res = await window.argent.git.exec({
       cwd: tab.cwd,
       args: ['status', '--porcelain=2', '--branch'],
     })
@@ -438,7 +438,7 @@ export function GitTab({ tab, isActive }: Props) {
 
   const loadRemotes = useCallback(async () => {
     if (!installed) return
-    const res = await window.opensmith.git.exec({
+    const res = await window.argent.git.exec({
       cwd: tab.cwd,
       args: ['remote'],
     })
@@ -458,14 +458,14 @@ export function GitTab({ tab, isActive }: Props) {
     setLoading(true)
     try {
       let isActuallyRepo = false
-      let revRes = await window.opensmith.git.exec({
+      let revRes = await window.argent.git.exec({
         cwd: tab.cwd,
         args: ['rev-parse', '--is-inside-work-tree']
       })
       
       if (!revRes.success && (revRes.stderr?.includes('dubious ownership') || revRes.error?.includes('dubious ownership'))) {
-        await window.opensmith.git.exec({ cwd: tab.cwd, args: ['config', '--global', '--add', 'safe.directory', '*'] })
-        revRes = await window.opensmith.git.exec({
+        await window.argent.git.exec({ cwd: tab.cwd, args: ['config', '--global', '--add', 'safe.directory', '*'] })
+        revRes = await window.argent.git.exec({
           cwd: tab.cwd,
           args: ['rev-parse', '--is-inside-work-tree']
         })
@@ -477,7 +477,7 @@ export function GitTab({ tab, isActive }: Props) {
         return
       }
 
-      const res = await window.opensmith.git.exec({
+      const res = await window.argent.git.exec({
         cwd: tab.cwd,
         args: ['status', '-s', '-uall'],
       })
@@ -506,19 +506,19 @@ export function GitTab({ tab, isActive }: Props) {
   useEffect(() => {
     async function checkGit() {
       try {
-        const out = await window.opensmith.git.checkInstalled()
+        const out = await window.argent.git.checkInstalled()
         setInstalled(out.installed)
 
         if (out.installed) {
           let isActuallyRepo = false
-          let revRes = await window.opensmith.git.exec({
+          let revRes = await window.argent.git.exec({
             cwd: tab.cwd,
             args: ['rev-parse', '--is-inside-work-tree']
           })
 
           if (!revRes.success && (revRes.stderr?.includes('dubious ownership') || revRes.error?.includes('dubious ownership'))) {
-            await window.opensmith.git.exec({ cwd: tab.cwd, args: ['config', '--global', '--add', 'safe.directory', '*'] })
-            revRes = await window.opensmith.git.exec({
+            await window.argent.git.exec({ cwd: tab.cwd, args: ['config', '--global', '--add', 'safe.directory', '*'] })
+            revRes = await window.argent.git.exec({
               cwd: tab.cwd,
               args: ['rev-parse', '--is-inside-work-tree']
             })
@@ -528,7 +528,7 @@ export function GitTab({ tab, isActive }: Props) {
           setIsRepo(isActuallyRepo)
 
           if (isActuallyRepo) {
-            const res = await window.opensmith.git.exec({
+            const res = await window.argent.git.exec({
               cwd: tab.cwd,
               args: ['status', '-s', '-uall'],
             })
@@ -558,8 +558,8 @@ export function GitTab({ tab, isActive }: Props) {
 
   async function initRepo() {
     setLoading(true)
-    await window.opensmith.git.exec({ cwd: tab.cwd, args: ['config', '--global', '--add', 'safe.directory', '*'] })
-    await window.opensmith.git.exec({ cwd: tab.cwd, args: ['init'] })
+    await window.argent.git.exec({ cwd: tab.cwd, args: ['config', '--global', '--add', 'safe.directory', '*'] })
+    await window.argent.git.exec({ cwd: tab.cwd, args: ['init'] })
     setTimeout(() => {
       void refreshStatus()
     }, 100)
@@ -568,7 +568,7 @@ export function GitTab({ tab, isActive }: Props) {
   async function stageFile(path: string) {
     if (loading || isStagingAll || stagingPath) return
     setStagingPath(path)
-    await window.opensmith.git.exec({ cwd: tab.cwd, args: ['add', '-A', '--', path] })
+    await window.argent.git.exec({ cwd: tab.cwd, args: ['add', '-A', '--', path] })
     await refreshStatus({ includeHistory: false, includePendingPush: false })
 
     if (selectedFile?.path === path) {
@@ -580,9 +580,9 @@ export function GitTab({ tab, isActive }: Props) {
   async function unstageFile(path: string) {
     if (loading || isStagingAll || stagingPath) return
     setStagingPath(path)
-    const res = await window.opensmith.git.exec({ cwd: tab.cwd, args: ['reset', 'HEAD', path] })
+    const res = await window.argent.git.exec({ cwd: tab.cwd, args: ['reset', 'HEAD', path] })
     if (!res.success && (res.stderr?.includes("ambiguous argument 'HEAD'") || res.error?.includes("ambiguous argument 'HEAD'"))) {
-      await window.opensmith.git.exec({ cwd: tab.cwd, args: ['rm', '--cached', path] })
+      await window.argent.git.exec({ cwd: tab.cwd, args: ['rm', '--cached', path] })
     }
     await refreshStatus({ includeHistory: false, includePendingPush: false })
 
@@ -596,9 +596,9 @@ export function GitTab({ tab, isActive }: Props) {
     if (loading || isStagingAll || stagingPath) return
     setIsStagingAll(true)
     if (allFullyStaged) {
-      let res = await window.opensmith.git.exec({ cwd: tab.cwd, args: ['reset', 'HEAD'] })
+      let res = await window.argent.git.exec({ cwd: tab.cwd, args: ['reset', 'HEAD'] })
       if (!res.success && (res.stderr?.includes("ambiguous argument 'HEAD'") || res.error?.includes("ambiguous argument 'HEAD'"))) {
-        res = await window.opensmith.git.exec({ cwd: tab.cwd, args: ['rm', '-r', '--cached', '.'] })
+        res = await window.argent.git.exec({ cwd: tab.cwd, args: ['rm', '-r', '--cached', '.'] })
       }
       if (!res.success) {
         setCommitError(res.stderr || res.error || 'Failed to unstage all changes')
@@ -615,7 +615,7 @@ export function GitTab({ tab, isActive }: Props) {
           continue
         }
 
-        const res = await window.opensmith.git.exec({ cwd: tab.cwd, args: ['add', '-A', '--', file.path] })
+        const res = await window.argent.git.exec({ cwd: tab.cwd, args: ['add', '-A', '--', file.path] })
         if (!res.success) {
           failedPaths.push(file.path)
         }
@@ -647,7 +647,7 @@ export function GitTab({ tab, isActive }: Props) {
     setDiffContent('Loading diff...')
 
     if (file.x === '?' && file.y === '?') {
-      const res = await window.opensmith.git.exec({
+      const res = await window.argent.git.exec({
         cwd: tab.cwd,
         args: ['diff', '--no-index', '/dev/null', file.path],
       })
@@ -657,9 +657,9 @@ export function GitTab({ tab, isActive }: Props) {
 
     const args = ['diff', 'HEAD', '--', file.path]
 
-    let res = await window.opensmith.git.exec({ cwd: tab.cwd, args })
+    let res = await window.argent.git.exec({ cwd: tab.cwd, args })
     if (!res.success && (res.stderr?.includes("ambiguous argument 'HEAD'") || res.error?.includes("ambiguous argument 'HEAD'"))) {
-      res = await window.opensmith.git.exec({ cwd: tab.cwd, args: ['diff', '--no-index', '/dev/null', file.path] })
+      res = await window.argent.git.exec({ cwd: tab.cwd, args: ['diff', '--no-index', '/dev/null', file.path] })
     }
     setDiffContent(cleanPatchNoise(res.stdout || 'No differences'))
   }
@@ -668,7 +668,7 @@ export function GitTab({ tab, isActive }: Props) {
     setSelectedCommitHash(hash)
     setCommitPreview('Loading commit...')
 
-    const res = await window.opensmith.git.exec({
+    const res = await window.argent.git.exec({
       cwd: tab.cwd,
       args: [
         'show',
@@ -695,16 +695,16 @@ export function GitTab({ tab, isActive }: Props) {
       return
     }
     setLoading(true)
-    const res = await window.opensmith.git.exec({
+    const res = await window.argent.git.exec({
       cwd: tab.cwd,
       args: ['remote', 'add', 'origin', newRemoteUrl.trim()],
     })
     
     if (res.success && history.length > 0) {
-      const branchRes = await window.opensmith.git.exec({ cwd: tab.cwd, args: ['branch', '--show-current'] })
+      const branchRes = await window.argent.git.exec({ cwd: tab.cwd, args: ['branch', '--show-current'] })
       const branch = branchRes.success && branchRes.stdout ? branchRes.stdout.trim() : 'main'
       if (branch) {
-        await window.opensmith.git.exec({ cwd: tab.cwd, args: ['push', '-u', 'origin', branch] })
+        await window.argent.git.exec({ cwd: tab.cwd, args: ['push', '-u', 'origin', branch] })
       }
     } else if (!res.success) {
       setCommitError(res.stderr || res.error || 'Failed to add remote')
@@ -721,7 +721,7 @@ export function GitTab({ tab, isActive }: Props) {
     setCommitError(null)
     setLoading(true)
 
-    const res = await window.opensmith.git.exec({
+    const res = await window.argent.git.exec({
       cwd: tab.cwd,
       args: ['commit', '-m', commitMessage.trim()],
     })
@@ -740,14 +740,14 @@ export function GitTab({ tab, isActive }: Props) {
     setCommitError(null)
     setLoading(true)
 
-    await window.opensmith.git.exec({ cwd: tab.cwd, args: ['pull'] })
-    let pushRes = await window.opensmith.git.exec({ cwd: tab.cwd, args: ['push'] })
+    await window.argent.git.exec({ cwd: tab.cwd, args: ['pull'] })
+    let pushRes = await window.argent.git.exec({ cwd: tab.cwd, args: ['push'] })
 
     if (!pushRes.success && (pushRes.stderr?.includes('has no upstream branch') || pushRes.error?.includes('has no upstream branch') || pushRes.stderr?.includes('setup upstream tracking'))) {
-      const branchRes = await window.opensmith.git.exec({ cwd: tab.cwd, args: ['branch', '--show-current'] })
+      const branchRes = await window.argent.git.exec({ cwd: tab.cwd, args: ['branch', '--show-current'] })
       const branch = branchRes.success && branchRes.stdout ? branchRes.stdout.trim() : 'main'
       if (branch) {
-        pushRes = await window.opensmith.git.exec({ cwd: tab.cwd, args: ['push', '-u', 'origin', branch] })
+        pushRes = await window.argent.git.exec({ cwd: tab.cwd, args: ['push', '-u', 'origin', branch] })
       }
     }
 
@@ -931,7 +931,7 @@ export function GitTab({ tab, isActive }: Props) {
         <AlertTriangle className="mb-4 h-12 w-12 text-[#b0b0b0]/80" />
         <h2 className="mb-2 text-xl font-medium text-white">Git CLI not installed</h2>
         <p className="max-w-md text-[#888]">
-          OpenSmith requires the Git command line tools to manage source control.
+          Argent requires the Git command line tools to manage source control.
           Please install Git and restart the application.
         </p>
       </div>

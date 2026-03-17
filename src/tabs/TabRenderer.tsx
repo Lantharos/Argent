@@ -1,4 +1,4 @@
-import type { AppTab, PromptAttachment, ProviderConfig } from '../types/opensmith'
+import type { AppTab, PromptAttachment, ProviderConfig } from '../types/argent'
 import { AITab } from '../components/tabs/AITab'
 import { BrowserTab } from '../components/tabs/BrowserTab'
 import { TerminalTab } from '../components/tabs/TerminalTab'

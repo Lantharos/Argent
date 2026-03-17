@@ -159,7 +159,7 @@ export type AppSnapshot = {
 
 declare global {
   interface Window {
-    opensmith: {
+    argent: {
       git: {
         checkInstalled: () => Promise<{ installed: boolean, version?: string, error?: string }>
         exec: (opts: { cwd: string, args: string[] }) => Promise<{ success: boolean, stdout?: string, stderr?: string, error?: string }>

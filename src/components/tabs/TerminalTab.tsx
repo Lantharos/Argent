@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef } from 'react'
 import { Terminal } from 'xterm'
 import { FitAddon } from 'xterm-addon-fit'
 import 'xterm/css/xterm.css'
-import type { TerminalTabData } from '../../types/opensmith'
+import type { TerminalTabData } from '../../types/argent'
 
 type Props = {
   tab: TerminalTabData
@@ -139,7 +139,7 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
 
       const sessionId = sessionIdRef.current
       if (sessionId) {
-        void window.opensmith.terminal.resize(sessionId, terminal.cols, terminal.rows)
+        void window.argent.terminal.resize(sessionId, terminal.cols, terminal.rows)
       }
     })
 
@@ -150,7 +150,7 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
     return () => {
       const sessionId = sessionIdRef.current
       if (sessionId) {
-        void window.opensmith.terminal.kill(sessionId)
+        void window.argent.terminal.kill(sessionId)
         sessionIdRef.current = null
       }
       resizeObserver.disconnect()
@@ -179,14 +179,14 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
       try {
         const existingSessionId = tab.sessionId
         if (existingSessionId) {
-          const alive = await window.opensmith.terminal.write(existingSessionId, '')
+          const alive = await window.argent.terminal.write(existingSessionId, '')
           if (alive) {
             sessionReplayModeRef.current[existingSessionId] = 'reuse'
             return
           }
         }
 
-        const created = await window.opensmith.terminal.create(tab.cwd)
+        const created = await window.argent.terminal.create(tab.cwd)
         sessionReplayModeRef.current[created.id] = 'new'
         if (!cancelled) {
           onChangeRef.current({ ...latestTabRef.current, sessionId: created.id })
@@ -230,7 +230,7 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
     let promptTimer: number | null = null
     let fitTimer: number | null = null
 
-    const unsubData = window.opensmith.terminal.onData((payload) => {
+    const unsubData = window.argent.terminal.onData((payload) => {
       const current = termRef.current
       if (!current) {
         return
@@ -244,7 +244,7 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
       }
     })
 
-    const unsubExit = window.opensmith.terminal.onExit((payload) => {
+    const unsubExit = window.argent.terminal.onExit((payload) => {
       const current = termRef.current
       if (!current) {
         return
@@ -259,13 +259,13 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
 
     inputDisposeRef.current?.dispose()
     inputDisposeRef.current = terminal.onData((value) => {
-      void window.opensmith.terminal.write(sessionId, value)
+      void window.argent.terminal.write(sessionId, value)
     })
 
     if (!replayText) {
       promptTimer = window.setTimeout(() => {
         if (!hasReceivedOutput && !pendingHistoryRef.current) {
-          void window.opensmith.terminal.write(sessionId, '\r')
+          void window.argent.terminal.write(sessionId, '\r')
         }
       }, 320)
     }
@@ -277,7 +277,7 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
 
       const current = termRef.current
       if (current) {
-        void window.opensmith.terminal.resize(sessionId, current.cols, current.rows)
+        void window.argent.terminal.resize(sessionId, current.cols, current.rows)
       }
     }, 50)
 
@@ -312,7 +312,7 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
       const sessionId = sessionIdRef.current
       const current = termRef.current
       if (sessionId && current) {
-        void window.opensmith.terminal.resize(sessionId, current.cols, current.rows)
+        void window.argent.terminal.resize(sessionId, current.cols, current.rows)
       }
       termRef.current?.focus()
     }, 30)

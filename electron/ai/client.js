@@ -881,8 +881,8 @@ async function requestViaCodexAppServer(parsed, provider, emitEvent = () => {}) 
   try {
     await rpc.request('initialize', {
       clientInfo: {
-        name: 'opensmith',
-        title: 'OpenSmith',
+        name: 'argent',
+        title: 'Argent',
         version: '0.1.0',
       },
       capabilities: {
@@ -1678,8 +1678,8 @@ async function listCodexModels(cwd) {
   try {
     await rpc.request('initialize', {
       clientInfo: {
-        name: 'opensmith',
-        title: 'OpenSmith',
+        name: 'argent',
+        title: 'Argent',
         version: '0.1.0',
       },
       capabilities: {

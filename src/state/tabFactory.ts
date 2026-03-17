@@ -1,4 +1,4 @@
-import type { AppTab, AppTabType } from '../types/opensmith'
+import type { AppTab, AppTabType } from '../types/argent'
 import { createId } from './ids'
 
 export function createTab(type: AppTabType, rootPath: string): AppTab {

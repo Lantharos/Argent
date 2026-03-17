@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "opensmith",
+      "name": "argent",
       "dependencies": {
         "@codemirror/lang-javascript": "^6.2.5",
         "@codemirror/state": "^6.6.0",

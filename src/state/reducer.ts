@@ -1,4 +1,4 @@
-import type { AppSnapshot, AppSpace, AppTab, AppTabGroup, AppTabSplitNode, AppTabType, SplitOrientation } from '../types/opensmith'
+import type { AppSnapshot, AppSpace, AppTab, AppTabGroup, AppTabSplitNode, AppTabType, SplitOrientation } from '../types/argent'
 import { createId } from './ids'
 import { createTab } from './tabFactory'
 

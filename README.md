@@ -1,14 +1,14 @@
-# OpenSmith
+# Argent
 
 A browser for building things.
 
-OpenSmith is a desktop workspace that brings your AI chat, code editor, terminal, browser, and Git tools together in one window, organized as tabs, composable as splits.
+Argent is a desktop workspace that brings your AI chat, code editor, terminal, browser, and Git tools together in one window, organized as tabs, composable as splits.
 
-![OpenSmith preview](./preview.png)
+![Argent preview](./preview.png)
 
 ## Philosophy
 
-OpenSmith is designed to be flexible.
+Argent is designed to be flexible.
 
 It started from a project-management-minded workflow, but it is not meant to force one rigid way of working. You can use it as a structured multi-surface workspace, or just use the pieces you care about.
 
@@ -18,11 +18,11 @@ It started from a project-management-minded workflow, but it is not meant to for
 - use it as an AI-first workspace
 - use it as a mixed environment where all of those stay visible and organized together
 
-That flexibility is the point. OpenSmith tries to give you a place to work that stays composable without being overly opinionated about your exact workflow.
+That flexibility is the point. Argent tries to give you a place to work that stays composable without being overly opinionated about your exact workflow.
 
 ## Status
 
-OpenSmith is currently pre-release software and the project is still moving quickly.
+Argent is currently pre-release software and the project is still moving quickly.
 
 This repository is Windows-first today. The codebase includes cross-platform pieces such as Electron and `node-pty`, but macOS and Linux are not currently verified by the maintainer, so those platforms should be treated as experimental until tested by contributors.
 
@@ -40,7 +40,7 @@ This repository is Windows-first today. The codebase includes cross-platform pie
 
 ### Spaces And Tabs
 
-OpenSmith organizes work into spaces. A space can point at a project folder or act as a more general workspace, and each space can hold multiple tabs for AI, editing, terminal work, browsing, and Git.
+Argent organizes work into spaces. A space can point at a project folder or act as a more general workspace, and each space can hold multiple tabs for AI, editing, terminal work, browsing, and Git.
 
 Tabs are not just flat pages. You can drag a tab from the sidebar into the active workspace to split the view and build side-by-side or stacked layouts. That makes it easy to keep, for example, an editor beside a terminal or an AI conversation beside the file you are changing.
 
@@ -60,7 +60,7 @@ The palette is designed for jumping between tabs and spaces or creating a new ta
 
 ### Workspace Navigation Gestures
 
-OpenSmith supports horizontal workspace paging between tab groups and pages, including touchpad-friendly navigation.
+Argent supports horizontal workspace paging between tab groups and pages, including touchpad-friendly navigation.
 
 - two-finger horizontal swipes can move between workspace pages
 - the app supports "peek" style partial movement while swiping before the page commits
@@ -104,11 +104,11 @@ The browser tab is useful for docs, testing, and quick research without leaving 
 - shared persistent browser partition
 - workspace-aware swipe integration
 
-It can also simply be used as a normal browser tab when that is all you need. OpenSmith does not require every tab to be part of an AI workflow.
+It can also simply be used as a normal browser tab when that is all you need. Argent does not require every tab to be part of an AI workflow.
 
 ### Git
 
-The Git tab is meant to cover the common local source control loop without leaving OpenSmith.
+The Git tab is meant to cover the common local source control loop without leaving Argent.
 
 - repo detection and initialization
 - changed-file list with stage and unstage controls
@@ -195,7 +195,7 @@ At the moment, this repository does not include installer or distributable packa
 
 ## Data And Configuration
 
-OpenSmith stores app state and provider data under Electron's user data directory in an `opensmith` subfolder. That includes:
+Argent stores app state and provider data under Electron's user data directory in an `argent` subfolder. That includes:
 
 - persisted workspace state
 - provider configuration

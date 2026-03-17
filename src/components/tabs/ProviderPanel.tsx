@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import type { ProviderConfig } from '../../types/opensmith'
+import type { ProviderConfig } from '../../types/argent'
 
 type Props = {
   providers: ProviderConfig[]
