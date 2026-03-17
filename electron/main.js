@@ -19,6 +19,7 @@ import {
   requestAssistantReplyStream,
   setAssistantMode,
 } from './ai/client.js'
+import { LanguageServerManager } from './editor/languageServerManager.js'
 import { TerminalManager } from './terminal/terminalManager.js'
 import { setupGitHandlers } from './git/gitManager.js'
 
@@ -30,6 +31,7 @@ const isDev = !app.isPackaged && Boolean(process.env.VITE_DEV_SERVER_URL)
 
 let windowRef = null
 let terminalManager = null
+let languageServerManager = null
 const activeAIStreams = new Map()
 const DEFAULT_WINDOW_WIDTH = 1400
 const DEFAULT_WINDOW_HEIGHT = 900
@@ -296,6 +298,24 @@ function setupIpc() {
 
   ipcMain.handle('terminal:kill', (_, id) => terminalManager.kill(id))
 
+  ipcMain.handle('editor:detect-workspace', (_, payload) => {
+    return languageServerManager.detectWorkspace(payload.workspacePath)
+  })
+  ipcMain.handle('editor:get-server-status', (_, payload) => languageServerManager.getServerStatus(payload))
+  ipcMain.handle('editor:install-server', (_, payload) => languageServerManager.installServer(payload))
+  ipcMain.handle('editor:start-server', (_, payload) => languageServerManager.startServerForUser(payload))
+  ipcMain.handle('editor:open-document', (_, payload) => languageServerManager.openDocument(payload))
+  ipcMain.handle('editor:change-document', (_, payload) => languageServerManager.changeDocument(payload))
+  ipcMain.handle('editor:close-document', (_, payload) => languageServerManager.closeDocument(payload))
+  ipcMain.handle('editor:request-completion', (_, payload) => languageServerManager.requestCompletion(payload))
+  ipcMain.handle('editor:request-hover', (_, payload) => languageServerManager.requestHover(payload))
+  ipcMain.handle('editor:request-definition', (_, payload) => languageServerManager.requestDefinition(payload))
+  ipcMain.handle('editor:request-rename', (_, payload) => languageServerManager.requestRename(payload))
+  ipcMain.handle('editor:request-formatting', (_, payload) => languageServerManager.requestFormatting(payload))
+  ipcMain.handle('editor:request-code-actions', (_, payload) => languageServerManager.requestCodeActions(payload))
+  ipcMain.handle('editor:launch-godot-editor', (_, payload) => languageServerManager.launchGodotEditor(payload.workspacePath))
+  ipcMain.handle('editor:run-godot-project', (_, payload) => languageServerManager.runGodotProject(payload.workspacePath))
+
   ipcMain.handle('fs:open-file', async (_, cwd) => {
     if (!windowRef) {
       return null
@@ -372,6 +392,11 @@ app.whenReady().then(() => {
   setupWebviewHardening()
   windowRef = createMainWindow()
   terminalManager = new TerminalManager((channel, payload) => {
+    if (windowRef && !windowRef.isDestroyed()) {
+      windowRef.webContents.send(channel, payload)
+    }
+  })
+  languageServerManager = new LanguageServerManager((channel, payload) => {
     if (windowRef && !windowRef.isDestroyed()) {
       windowRef.webContents.send(channel, payload)
     }

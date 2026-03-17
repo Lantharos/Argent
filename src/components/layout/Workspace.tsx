@@ -14,7 +14,7 @@ type Props = {
   activeTab: AppTab | null
   providers: ProviderConfig[]
   onUpdateTab: (tab: AppTab) => void
-  onOpenEditorFileInNewTab: (spaceId: string, afterTabId: string, filePath: string, content: string) => void
+  onOpenEditorFileInNewTab: (spaceId: string, afterTabId: string, filePath: string, content: string, language?: string) => void
   onSelectWorkspaceTab: (spaceId: string, tabId: string) => void
   onSplitTab: (spaceId: string, sourceTabId: string, targetTabId: string, direction: 'left' | 'right' | 'top' | 'bottom') => void
   onSetSplitRatio: (spaceId: string, branchId: string, ratio: number) => void
@@ -305,7 +305,7 @@ function RenderPanel({
   cwd: string
   providers: ProviderConfig[]
   onUpdateTab: (tab: AppTab) => void
-  onOpenEditorFileInNewTab: (spaceId: string, afterTabId: string, filePath: string, content: string) => void
+  onOpenEditorFileInNewTab: (spaceId: string, afterTabId: string, filePath: string, content: string, language?: string) => void
   onSendAI: (
     providerId: string,
     messages: { role: 'user' | 'assistant'; content: string }[],
@@ -1173,7 +1173,7 @@ export function Workspace({
     return (
       <div
         key={page.id}
-        className={`relative h-full min-h-0 shrink-0 ${!isCurrentPage ? 'opacity-[0.999]' : ''}`}
+        className="relative h-full min-h-0 shrink-0"
         style={{ width: `${pageWidth}px` }}
         aria-hidden={!isCurrentPage}
       >
@@ -1181,7 +1181,6 @@ export function Workspace({
           <div
             ref={isCurrentPage ? splitLayerRef : null}
             className="relative h-full min-h-0 w-full p-1"
-            style={{ animation: 'workspace-fade-in 220ms ease' }}
             onDragOver={(event) => {
               const payload = getCurrentDragPayload(event.dataTransfer)
               if (payload && payload.spaceId === space.id) {

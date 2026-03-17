@@ -5,6 +5,7 @@ import { appReducer } from './state/reducer'
 import { defaultSnapshot, createGlobalSpace, createSpace } from './state/snapshot'
 import { getActiveSpace, getTab } from './state/selectors'
 import { createTab } from './state/tabFactory'
+import { detectLanguageFromPath } from './editor/languageRegistry'
 import { CommandPalette } from './components/layout/CommandPalette'
 import { EmptyState } from './components/layout/EmptyState'
 import { SpaceSidebar } from './components/layout/SpaceSidebar'
@@ -148,7 +149,7 @@ function App() {
     dispatch({ type: 'set-active-space', spaceId })
   }
 
-  function openEditorFileInNewTab(spaceId: string, afterTabId: string, filePath: string, content: string) {
+  function openEditorFileInNewTab(spaceId: string, afterTabId: string, filePath: string, content: string, language?: string) {
     const space = state.spaces.find((item) => item.id === spaceId)
     if (!space) {
       return
@@ -165,6 +166,7 @@ function App() {
       title,
       filePath,
       content,
+      language: language ?? detectLanguageFromPath(filePath).id,
       dirty: false,
     }
 

@@ -58,7 +58,7 @@ export function createTab(type: AppTabType, rootPath: string): AppTab {
     title: 'Editor',
     filePath: null,
     content: '',
-    language: 'javascript',
+    language: 'plaintext',
     dirty: false,
   }
 }

@@ -1,3 +1,22 @@
+import type {
+  EditorCodeActionRequest,
+  EditorCompletionRequest,
+  EditorDefinitionRequest,
+  EditorDocumentPayload,
+  EditorEvent,
+  EditorFormattingRequest,
+  EditorHoverRequest,
+  EditorRenameRequest,
+  LspCodeAction,
+  LspCompletionItem,
+  LspHover,
+  LspLocation,
+  LspServerState,
+  LspTextEdit,
+  LspWorkspaceEdit,
+  WorkspaceFeatureInfo,
+} from '../editor/types'
+
 export type ProviderKind = 'acp-opencode'
 
 export type ProviderConfig = {
@@ -219,6 +238,24 @@ declare global {
         kill: (id: string) => Promise<boolean>
         onData: (callback: (payload: { id: string; data: string }) => void) => () => void
         onExit: (callback: (payload: { id: string; code: number | null }) => void) => () => void
+      }
+      editor: {
+        detectWorkspace: (workspacePath: string) => Promise<WorkspaceFeatureInfo>
+        getServerStatus: (payload: { workspacePath: string; languageId: string }) => Promise<LspServerState>
+        installServer: (payload: { workspacePath: string; languageId: string }) => Promise<{ success: boolean; message: string }>
+        startServer: (payload: { workspacePath: string; languageId: string; filePath?: string | null }) => Promise<{ success: boolean; message: string }>
+        openDocument: (payload: EditorDocumentPayload) => Promise<boolean | null>
+        changeDocument: (payload: EditorDocumentPayload) => Promise<boolean | null>
+        closeDocument: (payload: Omit<EditorDocumentPayload, 'content' | 'version'>) => Promise<boolean | null>
+        requestCompletion: (payload: EditorCompletionRequest) => Promise<LspCompletionItem[]>
+        requestHover: (payload: EditorHoverRequest) => Promise<LspHover | null>
+        requestDefinition: (payload: EditorDefinitionRequest) => Promise<LspLocation[]>
+        requestRename: (payload: EditorRenameRequest) => Promise<LspWorkspaceEdit | null>
+        requestFormatting: (payload: EditorFormattingRequest) => Promise<LspTextEdit[]>
+        requestCodeActions: (payload: EditorCodeActionRequest) => Promise<LspCodeAction[]>
+        launchGodotEditor: (workspacePath: string) => Promise<boolean>
+        runGodotProject: (workspacePath: string) => Promise<boolean>
+        onEvent: (callback: (payload: EditorEvent) => void) => () => void
       }
       fs: {
         openFile: (cwd: string | null) => Promise<string | null>
