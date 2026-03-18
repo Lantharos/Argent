@@ -20,8 +20,6 @@ jobs:
         include:
           - os: windows-latest
             script: release:win
-          - os: ubuntu-latest
-            script: release:linux
 
     steps:
       - name: Check out repository
