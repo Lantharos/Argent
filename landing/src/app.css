@@ -1,0 +1,49 @@
+@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap");
+@import "tailwindcss";
+
+@theme {
+    --font-sans: "Manrope", "Segoe UI", sans-serif;
+}
+
+.font-poppins {
+    font-family: "Poppins", sans-serif;
+}
+
+@layer base {
+    :root {
+        color-scheme: dark;
+    }
+
+    html {
+        scroll-behavior: smooth;
+    }
+
+    body {
+        @apply min-h-screen bg-[#0b0d11] font-sans text-[#f5f1eb] antialiased;
+        background:
+            radial-gradient(
+                circle at top left,
+                rgba(255, 255, 255, 0.08),
+                transparent 24%
+            ),
+            linear-gradient(180deg, #0b0d11 0%, #0f1318 100%);
+    }
+
+    a {
+        @apply text-inherit no-underline;
+    }
+
+    button {
+        font: inherit;
+    }
+}
+
+@layer components {
+    .download-pill {
+        @apply inline-flex min-h-[2.9rem] cursor-pointer items-center justify-center gap-2 rounded-full bg-[linear-gradient(135deg,#eef6ff,#dfeefc)] px-5 font-bold text-[#111a25] shadow-[0_14px_40px_rgba(0,0,0,0.26),inset_0_1px_0_rgba(255,255,255,0.78)] transition duration-200 hover:-translate-y-0.5 focus-visible:-translate-y-0.5 disabled:cursor-default disabled:opacity-80;
+    }
+
+    .secondary-pill {
+        @apply inline-flex min-h-[2.9rem] items-center justify-center rounded-full bg-white/6 px-5 font-bold text-[#f5f1eb] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] transition duration-200 hover:-translate-y-0.5 focus-visible:-translate-y-0.5;
+    }
+}
