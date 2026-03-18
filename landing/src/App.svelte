@@ -2,6 +2,129 @@
     import { onMount } from "svelte";
 
     const repoUrl = "https://github.com/Lantharos/Argent";
+
+    const storySteps = [
+        "Argent is built around the reality that coding work jumps between thinking, editing, running commands, checking output, reading docs, and committing changes. The point is not to hide those surfaces. The point is to keep them together.",
+        "It can be a place to keep AI chat, your code editor, terminal work, browser tabs, and Git tools visible in one window instead of scattering them across five different apps.",
+        "It can be structured or loose. You can use it as an AI-first workspace, as a terminal-heavy setup, or as a mixed environment where every surface stays in view while you work.",
+        "That flexibility is the point. Argent is meant to adapt to how you build things instead of forcing one rigid workflow on top of you.",
+    ];
+
+    let activeStoryIndex = 0;
+    let lastStoryChangeAt = 0;
+    let isStoryHovered = false;
+    let storyContainer: HTMLDivElement | null = null;
+
+    async function downloadLatestWindowsRelease() {
+        const headers = {
+            Accept: "application/vnd.github+json",
+        };
+
+        const getInstallerUrl = (
+            releases: Array<{
+                assets?: Array<{
+                    name?: string;
+                    browser_download_url?: string;
+                }>;
+            }>,
+        ) => {
+            for (const release of releases) {
+                const installer = release.assets?.find((asset) => {
+                    const name = asset.name?.toLowerCase() ?? "";
+                    return (
+                        Boolean(asset.browser_download_url) &&
+                        (name.endsWith(".exe") || name.endsWith(".msi"))
+                    );
+                });
+
+                if (installer?.browser_download_url) {
+                    return installer.browser_download_url;
+                }
+            }
+
+            return null;
+        };
+
+        try {
+            const latestResponse = await fetch(
+                "https://api.github.com/repos/Lantharos/Argent/releases/latest",
+                { headers },
+            );
+
+            if (latestResponse.ok) {
+                const latestRelease = await latestResponse.json();
+                const installerUrl = getInstallerUrl([latestRelease]);
+
+                if (installerUrl) {
+                    window.location.href = installerUrl;
+                    return;
+                }
+            }
+
+            const releasesResponse = await fetch(
+                "https://api.github.com/repos/Lantharos/Argent/releases",
+                { headers },
+            );
+
+            if (!releasesResponse.ok) {
+                throw new Error("Unable to fetch releases");
+            }
+
+            const releases = await releasesResponse.json();
+            const installerUrl = getInstallerUrl(
+                Array.isArray(releases) ? releases : [],
+            );
+
+            if (!installerUrl) {
+                throw new Error("No Windows installer found");
+            }
+
+            window.location.href = installerUrl;
+        } catch (error) {
+            console.error("Failed to download latest Windows release", error);
+            window.alert("No Windows installer release is available yet.");
+        }
+    }
+
+    function handleStoryWheel(event: WheelEvent) {
+        if (!isStoryHovered) return;
+        if (!storyContainer) return;
+
+        const rect = storyContainer.getBoundingClientRect();
+        const activationLine = window.innerHeight * 0.18;
+        const isActiveZone =
+            rect.top <= activationLine && rect.bottom >= activationLine;
+
+        if (!isActiveZone) return;
+
+        const direction = Math.sign(event.deltaY);
+        if (direction === 0) return;
+
+        const nextIndex = Math.min(
+            Math.max(activeStoryIndex + direction, 0),
+            storySteps.length - 1,
+        );
+
+        if (nextIndex === activeStoryIndex) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        const now = Date.now();
+        if (now - lastStoryChangeAt < 450) return;
+
+        activeStoryIndex = nextIndex;
+        lastStoryChangeAt = now;
+    }
+
+    onMount(() => {
+        const onWheel = (event: WheelEvent) => handleStoryWheel(event);
+        window.addEventListener("wheel", onWheel, { passive: false });
+
+        return () => {
+            window.removeEventListener("wheel", onWheel);
+        };
+    });
 </script>
 
 <svelte:head>
@@ -29,18 +152,28 @@
         />
     </div>
 
-    <div class="z-30 relative p-[150px]">
+    <div
+        bind:this={storyContainer}
+        class="z-30 relative p-[150px]"
+        role="presentation"
+        on:mouseenter={() => (isStoryHovered = true)}
+        on:mouseleave={() => (isStoryHovered = false)}
+    >
         <div class="flex flex-col gap-[20px]">
             <h1 class="text-black font-poppins text-[76px] font-semibold">
                 It is not trying to turn development into a single chat box.
             </h1>
 
-            <p class="text-black font-poppins text-[32px]">
-                Argent is built around the reality that coding work jumps
-                between thinking, editing, running commands, checking output,
-                reading docs, and committing changes. The point is not to hide
-                those surfaces. The point is to keep them together.
-            </p>
+            <div class="relative h-[190px] overflow-hidden">
+                {#each storySteps as step, index}
+                    <p
+                        class="absolute inset-0 text-black font-poppins text-[32px] leading-[1.45] transition-all duration-500"
+                        style={`opacity: ${activeStoryIndex === index ? 1 : 0}; transform: translateY(${activeStoryIndex === index ? 0 : 18}px); pointer-events: none;`}
+                    >
+                        {step}
+                    </p>
+                {/each}
+            </div>
         </div>
 
         <div class="flex flex-row justify-between items-center mt-30">
@@ -89,6 +222,7 @@
                 </a>
 
                 <button
+                    on:click={downloadLatestWindowsRelease}
                     class="bg-[#4E4639] hover:bg-[#625B4F] flex flex-row gap-[20px] text-[24px] items-center py-[20px] px-[30px] font-poppins text-[#D3D3D3] transition-colors duration-300 rounded-[24px] cursor-pointer"
                 >
                     <svg
