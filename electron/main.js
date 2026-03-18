@@ -28,6 +28,7 @@ import { setupGitHandlers } from './git/gitManager.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
+const WINDOWS_TITLEBAR_HEIGHT = 36
 const { autoUpdater } = electronUpdater
 
 const rendererUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173'
@@ -109,7 +110,7 @@ function createMainWindow() {
       ? {
           color: '#00000000',
           symbolColor: '#00000000',
-          height: 0,
+          height: WINDOWS_TITLEBAR_HEIGHT,
         }
       : false,
     vibrancy: isMac ? 'under-window' : undefined,
@@ -241,7 +242,7 @@ function setupIpc() {
     win.setTitleBarOverlay({
       color: '#00000000',
       symbolColor: visible ? '#e4e7ee' : '#00000000',
-      height: visible ? 36 : 0,
+      height: WINDOWS_TITLEBAR_HEIGHT,
     })
     return true
   })

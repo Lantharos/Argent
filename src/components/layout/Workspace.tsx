@@ -8,7 +8,6 @@ const TAB_SNOOZE_MS = 180_000
 const CACHE_CLEANUP_MS = 4_000
 const TITLEBAR_SHOW_Y = 72
 const TITLEBAR_HIDE_Y = 96
-
 type Props = {
   space: AppSpace
   activeTab: AppTab | null
