@@ -1,4 +1,4 @@
-# <img src="./public/icon.svg" width="20" style="vertical-align: middle;" /> Argent
+# <img src="./public/icon.svg" width="24" style="vertical-align: middle;" /> Argent
 
 A browser for building things.
 
