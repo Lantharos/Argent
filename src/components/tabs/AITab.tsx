@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import type { Components } from 'react-markdown'
 import {
+  Download,
   Check,
   ChevronDown,
   CircleDot,
@@ -15,6 +16,7 @@ import {
   Trash2,
   Plus,
   Loader2,
+  RefreshCw,
 } from 'lucide-react'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
@@ -40,6 +42,11 @@ type Props = {
 type ModelOption = { id: string; label: string; contextWindow?: number | null }
 type CommandOption = { name: string; description?: string }
 type ModeOption = { id: string; name: string; description?: string }
+type OpenCodeCliStatus = {
+  installed: boolean
+  version: string | null
+  installMethods: Array<{ id: string; label: string; detail: string }>
+}
 
 const EFFORT_ORDER = ['base', 'thinking', 'low', 'medium', 'high', 'xhigh'] as const
 const MODEL_CACHE_TTL_MS = 5 * 60 * 1000
@@ -48,6 +55,30 @@ const sharedModelOptionsFetchedAt: Record<string, number> = {}
 const sharedModelOptionsInflight = new Map<string, Promise<ModelOption[]>>()
 const sharedCommandOptionsCache: Record<string, CommandOption[]> = {}
 const sharedCommandOptionsInflight = new Map<string, Promise<CommandOption[]>>()
+let sharedOpenCodeCliStatus: OpenCodeCliStatus | null = null
+let sharedOpenCodeCliStatusInflight: Promise<OpenCodeCliStatus> | null = null
+
+function getSharedOpenCodeCliStatus(forceRefresh = false) {
+  if (!forceRefresh && sharedOpenCodeCliStatus) {
+    return Promise.resolve(sharedOpenCodeCliStatus)
+  }
+
+  if (!forceRefresh && sharedOpenCodeCliStatusInflight) {
+    return sharedOpenCodeCliStatusInflight
+  }
+
+  sharedOpenCodeCliStatusInflight = window.argent.ai
+    .getCliStatus()
+    .then((status) => {
+      sharedOpenCodeCliStatus = status
+      return status
+    })
+    .finally(() => {
+      sharedOpenCodeCliStatusInflight = null
+    })
+
+  return sharedOpenCodeCliStatusInflight
+}
 
 function getCommandInflightKey(providerId: string, cwd: string, sessionId?: string | null) {
   return `${providerId}::${cwd || ''}::${sessionId || ''}`
@@ -164,11 +195,48 @@ function normalizeMarkdownSpacing(content: string) {
   return content.replace(/\r\n/g, '\n')
 }
 
+function clearStreamBuffer(bufferRef: { current: string }, timerRef: { current: number | null }) {
+  bufferRef.current = ''
+  if (timerRef.current !== null) {
+    window.clearTimeout(timerRef.current)
+    timerRef.current = null
+  }
+}
+
 function toolStatusLabel(status: string) {
   if (status === 'pending') return 'Pending'
-  if (status === 'in_progress') return 'Running'
+  if (status === 'in_progress' || status === 'running') return 'Running'
   if (status === 'completed') return 'Done'
   if (status === 'failed') return 'Failed'
+  return status
+}
+
+function isToolActiveStatus(status: string) {
+  return status === 'pending' || status === 'in_progress' || status === 'running'
+}
+
+function shouldStartNewThoughtAfterToolStatus(status: string) {
+  return status === 'completed' || status === 'failed' || status === 'cancelled'
+}
+
+function normalizeToolDisplayStatus(status: string, loading: boolean) {
+  if (!loading && isToolActiveStatus(status)) {
+    return 'completed'
+  }
+  return status
+}
+
+function resolveRenderedToolStatus(
+  status: string,
+  loading: boolean,
+  hasLaterVisibleMessage: boolean,
+) {
+  if (!loading && isToolActiveStatus(status)) {
+    return 'completed'
+  }
+  if (loading && isToolActiveStatus(status) && hasLaterVisibleMessage) {
+    return 'completed'
+  }
   return status
 }
 
@@ -452,6 +520,13 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
   const [modelOptions, setModelOptions] = useState<ModelOption[]>([])
   const [modeOptions, setModeOptions] = useState<ModeOption[]>([])
   const [commandOptions, setCommandOptions] = useState<CommandOption[]>([])
+  const [opencodeCliStatus, setOpencodeCliStatus] = useState<OpenCodeCliStatus | null>(null)
+  const [installingOpenCodeMethodId, setInstallingOpenCodeMethodId] = useState<string | null>(null)
+  const [opencodeInstallMessage, setOpencodeInstallMessage] = useState<string | null>(null)
+  const [isLoadingModelOptions, setIsLoadingModelOptions] = useState(false)
+  const [isLoadingModeOptions, setIsLoadingModeOptions] = useState(false)
+  const [isAssistantFlushActive, setIsAssistantFlushActive] = useState(false)
+  const [isThoughtFlushActive, setIsThoughtFlushActive] = useState(false)
   const [commandMenuIndex, setCommandMenuIndex] = useState(0)
   const modelLoadTokenRef = useRef(0)
   const [modelFilter, setModelFilter] = useState('')
@@ -465,10 +540,15 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
   const pendingAssistantTextRef = useRef('')
   const flushTimerRef = useRef<number | null>(null)
   const activeAssistantMessageIndexRef = useRef<number | null>(null)
+  const activeThoughtMessageIndexRef = useRef<number | null>(null)
+  const shouldStartNewThoughtBlockRef = useRef(false)
+  const pendingThoughtTextRef = useRef('')
+  const thoughtFlushTimerRef = useRef<number | null>(null)
   const tabRef = useRef(tab)
   const onChangeRef = useRef(onChange)
   const scrollRef = useRef<HTMLDivElement>(null)
   const isAutoScrolling = useRef(true)
+  const isProgrammaticScrollRef = useRef(false)
   const isActiveRef = useRef(isActive)
   const copiedResetTimerRef = useRef<number | null>(null)
 
@@ -493,14 +573,59 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
     }
   }, [])
 
+  const refreshOpenCodeCliStatus = useCallback(async (forceRefresh = false) => {
+    try {
+      const status = await getSharedOpenCodeCliStatus(forceRefresh)
+      setOpencodeCliStatus(status)
+    } catch (error) {
+      const fallbackStatus = {
+        installed: false,
+        version: null,
+        installMethods: [],
+      }
+      sharedOpenCodeCliStatus = fallbackStatus
+      setOpencodeCliStatus(fallbackStatus)
+      setOpencodeInstallMessage(error instanceof Error ? error.message : String(error))
+    }
+  }, [])
+
+  useEffect(() => {
+    if (sharedOpenCodeCliStatus) {
+      setOpencodeCliStatus(sharedOpenCodeCliStatus)
+      return
+    }
+    void refreshOpenCodeCliStatus()
+  }, [refreshOpenCodeCliStatus])
+
+  useEffect(() => {
+    if (!opencodeInstallMessage) {
+      return
+    }
+
+    const timeout = window.setTimeout(() => {
+      setOpencodeInstallMessage(null)
+    }, 5000)
+
+    return () => window.clearTimeout(timeout)
+  }, [opencodeInstallMessage])
+
   const selectedProvider = useMemo<ProviderConfig | null>(
     () => providers.find((provider) => provider.id === 'opencode-acp') ?? null,
     [providers],
   )
 
-  const opencodeInstalled = Boolean(selectedProvider)
+  const hasOpenCodeProvider = Boolean(selectedProvider)
+  const opencodeInstalled = hasOpenCodeProvider && Boolean(opencodeCliStatus?.installed)
+  const checkingOpenCodeCli = opencodeCliStatus === null
   const selectedModelValue = tab.model || selectedProvider?.model || null
   const selectedModeId = tab.acpModeId || null
+  const isLoadingOpenCodeMeta =
+    opencodeInstalled &&
+    ((isLoadingModelOptions && modelOptions.length === 0) || (isLoadingModeOptions && modeOptions.length === 0))
+  const openCodeProviderKey = useMemo(
+    () => extractModelMeta('OpenCode/loading', 'opencode/loading', 'opencode').providerKey,
+    [],
+  )
 
   const selectedModelLabel = useMemo(() => {
     const selectedOption = modelOptions.find((item) => item.id === selectedModelValue)
@@ -635,6 +760,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
 
   const usedTokens = selectedModelUsage?.usedTokens ?? estimatedTokens
   const composerAttachments = tab.attachments ?? []
+  const isStreamingUi = loading || isAssistantFlushActive || isThoughtFlushActive
   const slashInputState = useMemo(() => {
     const lines = tab.input.split('\n')
     const firstLine = lines[0] ?? ''
@@ -719,11 +845,93 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
     return -1
   }, [tab.messages])
 
+  const lastAssistantThoughtIndex = useMemo(() => {
+    if (tab.messages.length === 0) {
+      return -1
+    }
+
+    for (let index = tab.messages.length - 1; index >= 0; index -= 1) {
+      const message = tab.messages[index]
+      if (message.role === 'assistant' && parseThoughtMessage(message.content) !== null) {
+        return index
+      }
+    }
+
+    return -1
+  }, [tab.messages])
+
   const updateTab = useCallback((updater: (current: AITabData) => AITabData) => {
     const next = updater(tabRef.current)
     tabRef.current = next
     onChangeRef.current(next)
   }, [])
+
+  const selectModel = useCallback(
+    (modelId: string, options?: { closeMenu?: boolean }) => {
+      updateTab((current) => ({ ...current, model: modelId }))
+      setModelFilter('')
+      if (options?.closeMenu ?? true) {
+        setModelMenuOpen(false)
+      }
+    },
+    [updateTab],
+  )
+
+  const selectMode = useCallback(
+    (mode: ModeOption) => {
+      updateTab((current) => ({
+        ...current,
+        acpModeId: mode.id,
+      }))
+      setActiveMetaPopover(null)
+
+      if (!selectedProvider) {
+        return
+      }
+
+      void window.argent.ai
+        .setMode({
+          providerId: selectedProvider.id,
+          cwd,
+          sessionId: tabRef.current.acpSessionId || undefined,
+          modeId: mode.id,
+        })
+        .then((result) => {
+          updateTab((current) => ({
+            ...current,
+            acpSessionId: result.sessionId,
+            acpModeId: result.modeId,
+          }))
+        })
+        .catch(() => {
+          // no-op
+        })
+    },
+    [cwd, selectedProvider, updateTab],
+  )
+
+  const handleInstallOpenCode = useCallback(
+    async (methodId: string) => {
+      setInstallingOpenCodeMethodId(methodId)
+      setOpencodeInstallMessage(null)
+
+      try {
+        const status = await window.argent.ai.installCli({ methodId })
+        sharedOpenCodeCliStatus = status
+        setOpencodeCliStatus(status)
+        setOpencodeInstallMessage(
+          status.installed
+            ? `OpenCode CLI installed${status.version ? ` (${status.version})` : ''}.`
+            : 'OpenCode CLI install finished, but the binary is still unavailable.',
+        )
+      } catch (error) {
+        setOpencodeInstallMessage(error instanceof Error ? error.message : String(error))
+      } finally {
+        setInstallingOpenCodeMethodId(null)
+      }
+    },
+    [],
+  )
 
   useEffect(() => {
     setLoading(Boolean(tab.isGenerating))
@@ -741,13 +949,28 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
   }, [isActive, tab.hasUnread, updateTab])
 
   useEffect(() => {
-    if (isAutoScrolling.current && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    if (!isAutoScrolling.current || !scrollRef.current) {
+      return
     }
-  }, [tab.messages, loading])
+
+    const element = scrollRef.current
+    isProgrammaticScrollRef.current = true
+    const frame = window.requestAnimationFrame(() => {
+      element.scrollTop = element.scrollHeight
+      window.requestAnimationFrame(() => {
+        isProgrammaticScrollRef.current = false
+      })
+    })
+
+    return () => {
+      window.cancelAnimationFrame(frame)
+      isProgrammaticScrollRef.current = false
+    }
+  }, [tab.messages, isStreamingUi])
 
   const handleScroll = useCallback(() => {
     if (!scrollRef.current) return
+    if (isProgrammaticScrollRef.current) return
     const { scrollTop, scrollHeight, clientHeight } = scrollRef.current
     isAutoScrolling.current = scrollHeight - scrollTop - clientHeight < 100
   }, [])
@@ -787,11 +1010,13 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
     if (flushTimerRef.current !== null) {
       return
     }
+    setIsAssistantFlushActive(true)
 
     const flush = () => {
       flushTimerRef.current = null
       const pending = pendingAssistantTextRef.current
       if (!pending) {
+        setIsAssistantFlushActive(false)
         return
       }
 
@@ -802,6 +1027,8 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
 
       if (pendingAssistantTextRef.current.length > 0) {
         flushTimerRef.current = window.setTimeout(flush, 16)
+      } else {
+        setIsAssistantFlushActive(false)
       }
     }
 
@@ -815,6 +1042,77 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
     pendingAssistantTextRef.current += delta
     scheduleAssistantFlush()
   }, [scheduleAssistantFlush])
+
+  const appendThoughtDelta = useCallback((delta: string) => {
+    if (!delta) {
+      return
+    }
+
+    updateTab((current) => {
+      const messages = [...current.messages]
+      const existingIndex = activeThoughtMessageIndexRef.current
+      const existingMessage =
+        typeof existingIndex === 'number' && existingIndex >= 0 && existingIndex < messages.length
+          ? messages[existingIndex]
+          : null
+      const existingThought =
+        existingMessage?.role === 'assistant' && typeof existingMessage.content === 'string'
+          ? parseThoughtMessage(existingMessage.content)
+          : null
+
+      if (typeof existingThought === 'string' && typeof existingIndex === 'number') {
+        messages[existingIndex] = {
+          role: 'assistant',
+          content: formatThoughtMessage(`${existingThought}${delta}`),
+        }
+      } else {
+        messages.push({ role: 'assistant', content: formatThoughtMessage(delta) })
+        activeThoughtMessageIndexRef.current = messages.length - 1
+      }
+
+      return {
+        ...current,
+        messages,
+      }
+    })
+  }, [updateTab])
+
+  const scheduleThoughtFlush = useCallback(() => {
+    if (thoughtFlushTimerRef.current !== null) {
+      return
+    }
+    setIsThoughtFlushActive(true)
+
+    const flush = () => {
+      thoughtFlushTimerRef.current = null
+      const pending = pendingThoughtTextRef.current
+      if (!pending) {
+        setIsThoughtFlushActive(false)
+        return
+      }
+
+      const chunkSize = pending.length > 140 ? 12 : pending.length > 80 ? 8 : 4
+      const nextChunk = pending.slice(0, chunkSize)
+      pendingThoughtTextRef.current = pending.slice(chunkSize)
+      appendThoughtDelta(nextChunk)
+
+      if (pendingThoughtTextRef.current.length > 0) {
+        thoughtFlushTimerRef.current = window.setTimeout(flush, 16)
+      } else {
+        setIsThoughtFlushActive(false)
+      }
+    }
+
+    thoughtFlushTimerRef.current = window.setTimeout(flush, 16)
+  }, [appendThoughtDelta])
+
+  const enqueueThoughtDelta = useCallback((delta: string) => {
+    if (!delta) {
+      return
+    }
+    pendingThoughtTextRef.current += delta
+    scheduleThoughtFlush()
+  }, [scheduleThoughtFlush])
 
   const markdownComponents = useMemo<Components>(
     () => ({
@@ -856,30 +1154,18 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
           return
         }
 
-        updateTab((current) => {
-          const messages = [...current.messages]
-          const last = messages.at(-1)
-          const lastThought =
-            last?.role === 'assistant' && typeof last?.content === 'string' ? parseThoughtMessage(last.content) : null
+        if (shouldStartNewThoughtBlockRef.current) {
+          activeThoughtMessageIndexRef.current = null
+          shouldStartNewThoughtBlockRef.current = false
+        }
 
-          if (typeof lastThought === 'string') {
-            messages[messages.length - 1] = {
-              role: 'assistant',
-              content: formatThoughtMessage(`${lastThought}${event.delta}`),
-            }
-          } else {
-            messages.push({ role: 'assistant', content: formatThoughtMessage(event.delta) })
-          }
-
-          return {
-            ...current,
-            messages,
-          }
-        })
+        enqueueThoughtDelta(event.delta)
         return
       }
 
       if (event.type === 'text-delta') {
+        activeThoughtMessageIndexRef.current = null
+        shouldStartNewThoughtBlockRef.current = false
         enqueueAssistantDelta(event.delta)
         return
       }
@@ -901,6 +1187,9 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
       if (event.type === 'tool') {
         const toolId = event.id || `${event.kind || 'tool'}:${event.title}`
         toolStatusByIdRef.current[toolId] = event.status
+        if (shouldStartNewThoughtAfterToolStatus(event.status)) {
+          shouldStartNewThoughtBlockRef.current = true
+        }
 
         updateTab((current) => {
           const messages = [...current.messages]
@@ -931,7 +1220,10 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
       if (event.type === 'error') {
         activeRequestIdRef.current = null
         toolStatusByIdRef.current = {}
-        activeAssistantMessageIndexRef.current = null
+        activeThoughtMessageIndexRef.current = null
+        shouldStartNewThoughtBlockRef.current = false
+        clearStreamBuffer(pendingThoughtTextRef, thoughtFlushTimerRef)
+        setIsThoughtFlushActive(false)
         setLoading(false)
         const wasCancelled = /cancel|aborted/i.test(event.message)
 
@@ -941,7 +1233,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
             .map((msg) => {
             if (msg.role === 'assistant') {
               const tool = parseToolMessage(msg.content)
-              if (tool && (tool.status === 'in_progress' || tool.status === 'pending')) {
+              if (tool && isToolActiveStatus(tool.status)) {
                 return { ...msg, content: formatToolMessage(tool.title, 'failed', tool.kind, tool.detail) }
               }
             }
@@ -964,7 +1256,8 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
       if (event.type === 'done') {
         activeRequestIdRef.current = null
         toolStatusByIdRef.current = {}
-        activeAssistantMessageIndexRef.current = null
+        activeThoughtMessageIndexRef.current = null
+        shouldStartNewThoughtBlockRef.current = false
         setLoading(false)
 
         if (event.reply?.id) {
@@ -1018,7 +1311,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
             .map((msg) => {
             if (msg.role === 'assistant') {
               const tool = parseToolMessage(msg.content)
-              if (tool && (tool.status === 'in_progress' || tool.status === 'pending')) {
+              if (tool && isToolActiveStatus(tool.status)) {
                 return { ...msg, content: formatToolMessage(tool.title, 'completed', tool.kind, tool.detail) }
               }
             }
@@ -1043,13 +1336,21 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
 
     return () => {
       unsubscribe()
-      if (flushTimerRef.current !== null) {
-        window.clearTimeout(flushTimerRef.current)
-        flushTimerRef.current = null
-      }
-      pendingAssistantTextRef.current = ''
+      clearStreamBuffer(pendingAssistantTextRef, flushTimerRef)
+      clearStreamBuffer(pendingThoughtTextRef, thoughtFlushTimerRef)
+      setIsAssistantFlushActive(false)
+      setIsThoughtFlushActive(false)
     }
-  }, [cwd, enqueueAssistantDelta, selectedProvider, updateTab])
+  }, [cwd, enqueueAssistantDelta, enqueueThoughtDelta, selectedProvider, updateTab])
+
+  useEffect(() => {
+    if (isStreamingUi) {
+      return
+    }
+
+    activeAssistantMessageIndexRef.current = null
+    activeThoughtMessageIndexRef.current = null
+  }, [isStreamingUi])
 
   useEffect(() => {
     if (!loading) {
@@ -1073,7 +1374,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
       }
 
       const statuses = Object.values(toolStatusByIdRef.current)
-      const hasActiveTools = statuses.some((status) => status === 'pending' || status === 'in_progress' || status === 'running')
+      const hasActiveTools = statuses.some((status) => isToolActiveStatus(status))
       if (hasActiveTools) {
         return
       }
@@ -1094,7 +1395,10 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
       const staleRequestId = activeRequestIdRef.current
       activeRequestIdRef.current = null
       toolStatusByIdRef.current = {}
-      activeAssistantMessageIndexRef.current = null
+      activeThoughtMessageIndexRef.current = null
+      shouldStartNewThoughtBlockRef.current = false
+      clearStreamBuffer(pendingThoughtTextRef, thoughtFlushTimerRef)
+      setIsThoughtFlushActive(false)
       setLoading(false)
 
       updateTab((current) => {
@@ -1103,7 +1407,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
           .map((msg) => {
             if (msg.role === 'assistant') {
               const tool = parseToolMessage(msg.content)
-              if (tool && (tool.status === 'in_progress' || tool.status === 'pending')) {
+              if (tool && isToolActiveStatus(tool.status)) {
                 return { ...msg, content: formatToolMessage(tool.title, 'completed', tool.kind, tool.detail) }
               }
             }
@@ -1150,11 +1454,13 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
 
   useEffect(() => {
     async function loadModels() {
-      if (!selectedProvider) {
+      if (!selectedProvider || !opencodeInstalled) {
         setModelOptions([])
+        setIsLoadingModelOptions(false)
         return
       }
 
+      setIsLoadingModelOptions(true)
       const providerId = selectedProvider.id
       const fallback = [{ id: selectedProvider.model, label: selectedProvider.model, contextWindow: null }]
       const cached = sharedModelOptionsCache[providerId]
@@ -1183,6 +1489,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
             model: nextModel,
           }))
         }
+        setIsLoadingModelOptions(false)
         return
       }
 
@@ -1218,6 +1525,11 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
           return
         }
         setModelOptions(resolved)
+        void refreshOpenCodeCliStatus(true)
+      } finally {
+        if (token === modelLoadTokenRef.current) {
+          setIsLoadingModelOptions(false)
+        }
       }
 
       const current = tabRef.current
@@ -1235,15 +1547,19 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
     }
 
     void loadModels()
-  }, [selectedProvider, cwd, updateTab])
+  }, [selectedProvider, cwd, opencodeInstalled, refreshOpenCodeCliStatus, updateTab])
 
   useEffect(() => {
+    let cancelled = false
+
     async function loadModes() {
-      if (!selectedProvider) {
+      if (!selectedProvider || !opencodeInstalled) {
         setModeOptions([])
+        setIsLoadingModeOptions(false)
         return
       }
 
+      setIsLoadingModeOptions(true)
       try {
         const modeState = await window.argent.ai.listModes({
           providerId: selectedProvider.id,
@@ -1275,15 +1591,23 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
         }
       } catch {
         setModeOptions([])
+        void refreshOpenCodeCliStatus(true)
+      } finally {
+        if (!cancelled) {
+          setIsLoadingModeOptions(false)
+        }
       }
     }
 
     void loadModes()
-  }, [selectedProvider, cwd, tab.acpSessionId, updateTab])
+    return () => {
+      cancelled = true
+    }
+  }, [selectedProvider, cwd, opencodeInstalled, refreshOpenCodeCliStatus, updateTab])
 
   useEffect(() => {
     async function loadCommands() {
-      if (!selectedProvider) {
+      if (!selectedProvider || !opencodeInstalled) {
         setCommandOptions([])
         return
       }
@@ -1334,11 +1658,12 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
         if (!cached || cached.length === 0) {
           setCommandOptions([])
         }
+        void refreshOpenCodeCliStatus(true)
       }
     }
 
     void loadCommands()
-  }, [selectedProvider, cwd, tab.acpSessionId])
+  }, [selectedProvider, cwd, opencodeInstalled, refreshOpenCodeCliStatus, tab.acpSessionId])
 
   const applySlashCommand = useCallback((name: string) => {
     updateTab((current) => {
@@ -1491,7 +1816,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
       .map((msg) => {
         if (msg.role === 'assistant') {
           const tool = parseToolMessage(msg.content)
-          if (tool && (tool.status === 'in_progress' || tool.status === 'pending')) {
+          if (tool && isToolActiveStatus(tool.status)) {
             return { ...msg, content: formatToolMessage(tool.title, 'completed', tool.kind, tool.detail) }
           }
         }
@@ -1538,7 +1863,13 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
     toolStatusByIdRef.current = {}
     lastStreamEventAtRef.current = 0
     activeAssistantMessageIndexRef.current = null
+    activeThoughtMessageIndexRef.current = null
+    shouldStartNewThoughtBlockRef.current = false
     cancelRequestedRef.current = false
+    clearStreamBuffer(pendingAssistantTextRef, flushTimerRef)
+    clearStreamBuffer(pendingThoughtTextRef, thoughtFlushTimerRef)
+    setIsAssistantFlushActive(false)
+    setIsThoughtFlushActive(false)
 
     setLoading(true)
     isAutoScrolling.current = true
@@ -1679,7 +2010,13 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
     toolStatusByIdRef.current = {}
     lastStreamEventAtRef.current = 0
     activeAssistantMessageIndexRef.current = null
+    activeThoughtMessageIndexRef.current = null
+    shouldStartNewThoughtBlockRef.current = false
     cancelRequestedRef.current = false
+    clearStreamBuffer(pendingAssistantTextRef, flushTimerRef)
+    clearStreamBuffer(pendingThoughtTextRef, thoughtFlushTimerRef)
+    setIsAssistantFlushActive(false)
+    setIsThoughtFlushActive(false)
 
     updateTab((prev) => ({
       ...prev,
@@ -1779,6 +2116,12 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
     toolStatusByIdRef.current = {}
     lastStreamEventAtRef.current = 0
     activeAssistantMessageIndexRef.current = null
+    activeThoughtMessageIndexRef.current = null
+    shouldStartNewThoughtBlockRef.current = false
+    clearStreamBuffer(pendingAssistantTextRef, flushTimerRef)
+    clearStreamBuffer(pendingThoughtTextRef, thoughtFlushTimerRef)
+    setIsAssistantFlushActive(false)
+    setIsThoughtFlushActive(false)
 
     setLoading(false)
 
@@ -1788,7 +2131,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
         .map((msg) => {
         if (msg.role === 'assistant') {
           const tool = parseToolMessage(msg.content)
-          if (tool && (tool.status === 'in_progress' || tool.status === 'pending')) {
+          if (tool && isToolActiveStatus(tool.status)) {
             return { ...msg, content: formatToolMessage(tool.title, 'failed', tool.kind, tool.detail) }
           }
         }
@@ -1823,15 +2166,77 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
         onScroll={handleScroll}
         className="flex flex-1 min-h-0 flex-col gap-3 overflow-auto px-5 md:px-12 lg:px-24 pt-5 pb-56 [-webkit-app-region:no-drag]"
       >
-        {!opencodeInstalled ? (
-          <div className="w-full max-w-[760px] mx-auto mt-8 rounded-2xl border border-[#3a2f21] bg-[#1a140e] px-4 py-3 text-[#d6b796]">
-            <div className="text-[14px] font-semibold text-[#e8c89f]">OpenCode CLI required</div>
-            <p className="mt-1 mb-0 text-[13px] text-[#d2b08a]">Install OpenCode CLI and ensure `opencode` is available in PATH. Then restart Argent.</p>
-            <p className="mt-1 mb-0 text-[12px] text-[#b8926f]">Command: `bun add -g opencode-ai` or your preferred install method from opencode.ai/docs.</p>
+        {checkingOpenCodeCli ? (
+          <div className="flex h-full min-h-[320px] flex-1 items-center justify-center text-sm text-[#9a9a9a]">
+            <div className="inline-flex items-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin text-[#bdbdbd]" />
+              <span>Checking OpenCode installation...</span>
+            </div>
           </div>
-        ) : null}
-
-        {tab.messages.length === 0 ? (
+        ) : !opencodeInstalled ? (
+          <div className="flex h-full min-h-[380px] flex-1 items-center justify-center">
+            <div className="w-full max-w-[620px] text-center">
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-white/5 text-[#d8d8d8] ring-1 ring-white/10">
+                <ProviderGlyph providerKey={openCodeProviderKey} className="h-7 w-7 text-[#d8d8d8]" />
+              </div>
+              <h2 className="mb-0 mt-5 text-[28px] font-semibold tracking-tight text-white">Install OpenCode</h2>
+              <p className="mx-auto mb-0 mt-3 max-w-[520px] text-[14px] leading-6 text-[#8e8e8e]">
+                Argent uses the OpenCode CLI for AI chat. Install it once and we&apos;ll wire the rest up automatically.
+              </p>
+              {opencodeInstallMessage ? (
+                <div className="mx-auto mt-5 max-w-[520px] rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-left text-[13px] text-[#cfcfcf]">
+                  {opencodeInstallMessage}
+                </div>
+              ) : null}
+              <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+                {(opencodeCliStatus?.installMethods ?? []).map((method, index) => {
+                  const isInstalling = installingOpenCodeMethodId === method.id
+                  const isPrimary = index === 0
+                  return (
+                    <button
+                      key={method.id}
+                      type="button"
+                      className={
+                        isPrimary
+                          ? 'primary-btn h-10 px-4 text-[13px] disabled:cursor-wait disabled:opacity-60'
+                          : 'ghost-btn h-10 rounded-xl border border-white/10 px-4 text-[13px] text-[#cfcfcf] hover:text-white disabled:cursor-wait disabled:opacity-60'
+                      }
+                      onClick={() => {
+                        void handleInstallOpenCode(method.id)
+                      }}
+                      disabled={installingOpenCodeMethodId !== null}
+                      title={method.detail}
+                    >
+                      {isInstalling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : isPrimary ? <Download className="h-3.5 w-3.5" /> : null}
+                      <span>{isInstalling ? 'Installing...' : method.label}</span>
+                    </button>
+                  )
+                })}
+                <button
+                  type="button"
+                  className="ghost-btn h-10 rounded-xl border border-white/10 px-4 text-[13px] text-[#cfcfcf] hover:text-white"
+                  onClick={() => {
+                    void refreshOpenCodeCliStatus()
+                  }}
+                  disabled={installingOpenCodeMethodId !== null}
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  <span>Refresh</span>
+                </button>
+              </div>
+              {opencodeCliStatus && opencodeCliStatus.installMethods.length === 0 ? (
+                <div className="mx-auto mt-6 max-w-[560px] rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-4 text-left">
+                  <div className="text-[12px] font-medium uppercase tracking-[0.18em] text-[#767676]">Manual Install</div>
+                  <div className="mt-3 space-y-2 font-mono text-[12px] text-[#c8c8c8]">
+                    <div>`bun add -g opencode-ai`</div>
+                    <div>`npm i -g opencode-ai`</div>
+                    <div>`brew install anomalyco/tap/opencode`</div>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        ) : tab.messages.length === 0 ? (
           <div className="w-full max-w-[760px] mx-auto mt-10 md:mt-16 px-2 text-center">
             <h2 className="m-0 text-[30px] leading-tight font-semibold tracking-tight text-[#efefef]">
               {spaceKind === 'global' ? 'What do you want to do?' : 'What do you want to build?'}
@@ -1844,7 +2249,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
           </div>
         ) : null}
 
-        {tab.messages.map((message, index) => (
+        {opencodeInstalled ? tab.messages.map((message, index) => (
           (() => {
             const parsedTool = message.role === 'assistant' ? parseToolMessage(message.content) : null
             const parsedThought = message.role === 'assistant' ? parseThoughtMessage(message.content) : null
@@ -1857,11 +2262,37 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
               message.role === 'user' &&
               userImageAttachments.length > 0 &&
               /^Attached\s+\d+\s+item/i.test((message.content || '').trim())
+            let hasLaterVisibleMessage = false
+            if (parsedTool && isToolActiveStatus(parsedTool.status)) {
+              for (let nextIndex = index + 1; nextIndex < tab.messages.length; nextIndex += 1) {
+                const nextMessage = tab.messages[nextIndex]
+                if (nextMessage.role !== 'assistant') {
+                  hasLaterVisibleMessage = true
+                  break
+                }
+
+                const nextTool = parseToolMessage(nextMessage.content)
+                if (nextTool) {
+                  const nextToolStatus = normalizeToolDisplayStatus(nextTool.status, loading)
+                  if (!isToolActiveStatus(nextToolStatus) || nextTool.kind !== parsedTool.kind || nextTool.title !== parsedTool.title) {
+                    hasLaterVisibleMessage = true
+                    break
+                  }
+                  continue
+                }
+
+                if (parsePlanMessage(nextMessage.content)) {
+                  continue
+                }
+
+                hasLaterVisibleMessage = true
+                break
+              }
+            }
+
             const toolData = parsedTool ? {
               ...parsedTool,
-              status: (!loading && (parsedTool.status === 'in_progress' || parsedTool.status === 'pending')) 
-                ? 'completed' 
-                : parsedTool.status
+              status: resolveRenderedToolStatus(parsedTool.status, loading, hasLaterVisibleMessage),
             } : null
 
             if (toolData) {
@@ -1891,11 +2322,11 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
                     </div>
                     <span className={`text-[12px] flex items-center gap-1.5 ${
                       toolData.status === 'failed' ? 'text-red-400' :
-                      toolData.status === 'in_progress' ? 'text-blue-400' :
+                      (toolData.status === 'in_progress' || toolData.status === 'running') ? 'text-blue-400' :
                       toolData.status === 'completed' ? 'text-[#878787]' :
                       'text-[#707070]'
                     }`}>
-                      {toolData.status === 'in_progress' && !isCompacting ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                      {(toolData.status === 'in_progress' || toolData.status === 'running') && !isCompacting ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
                       {toolStatusLabel(toolData.status)}
                     </span>
                   </div>
@@ -1904,12 +2335,24 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
             }
 
             if (parsedThought !== null) {
+              const isStreamingThought =
+                isThoughtFlushActive &&
+                index === lastAssistantThoughtIndex &&
+                !shouldStartNewThoughtBlockRef.current &&
+                (activeAssistantMessageIndexRef.current === null || index > activeAssistantMessageIndexRef.current)
               return (
-                <div key={index} className="mr-auto w-full max-w-full py-1">
-                  <blockquote className="m-0 border-l-2 border-white/15 bg-white/[0.04] px-3 py-2 text-[13px] italic text-[#8f8f8f]">
-                    <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={markdownComponents}>
-                      {normalizeMarkdownSpacing(parsedThought)}
-                    </ReactMarkdown>
+                <div key={index} className={`mr-auto w-full max-w-full py-1 ${isStreamingThought ? '' : 'ai-message-enter'}`}>
+                  <blockquote className={`ai-thinking-block m-0 border-l-2 border-white/15 bg-white/[0.04] px-3 py-2 text-[13px] italic text-[#8f8f8f] ${isStreamingThought ? 'ai-thinking-active' : ''}`}>
+                    {isStreamingThought ? (
+                      <span className="ai-thinking-stream whitespace-pre-wrap break-words leading-6 text-[#9d9d9d]">
+                        {parsedThought}
+                        <span className="ai-stream-caret" aria-hidden="true" />
+                      </span>
+                    ) : (
+                      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={markdownComponents}>
+                        {normalizeMarkdownSpacing(parsedThought)}
+                      </ReactMarkdown>
+                    )}
                   </blockquote>
                 </div>
               )
@@ -1933,12 +2376,12 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
                 <div className="prose prose-invert max-w-none prose-p:my-2 prose-p:leading-7 prose-headings:my-2 prose-strong:text-[#efefef] prose-em:text-[#d6d6d6] prose-code:text-[#d9d9d9] prose-pre:bg-[#111111]/90 prose-pre:border prose-pre:border-white/10 prose-pre:rounded-xl prose-blockquote:border-l-white/25 prose-blockquote:text-[#c9c9c9] prose-table:my-3 prose-table:w-full prose-th:border prose-th:border-white/20 prose-th:px-2 prose-th:py-1 prose-td:border prose-td:border-white/15 prose-td:px-2 prose-td:py-1 prose-hr:border-white/15">
                   <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={markdownComponents}>
                     {normalizeMarkdownSpacing(
-                      loading && index === activeAssistantMessageIndexRef.current && (message.content || '').trim().length > 0
+                      isStreamingUi && index === activeAssistantMessageIndexRef.current && (message.content || '').trim().length > 0
                         ? `${message.content || ''}▌`
                         : message.content || '',
                     )}
                   </ReactMarkdown>
-                  {loading && index === activeAssistantMessageIndexRef.current && (message.content || '').trim().length === 0 ? (
+                  {isStreamingUi && index === activeAssistantMessageIndexRef.current && (message.content || '').trim().length === 0 ? (
                     <span className="inline-block animate-pulse text-[#f0f0f0]">▌</span>
                   ) : null}
                 </div>
@@ -2026,15 +2469,16 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
           </div>
             )
           })()
-        ))}
+        )) : null}
 
-        {loading && lastAssistantTextIndex === -1 ? (
+        {opencodeInstalled && isStreamingUi && lastAssistantTextIndex === -1 ? (
           <div className="py-1 px-0 border-none mr-auto bg-transparent text-[#b6b6b6] w-full max-w-full">
             <span className="inline-block animate-pulse text-[#f0f0f0]">▌</span>
           </div>
         ) : null}
       </div>
 
+      {opencodeInstalled ? (
       <form
         className="absolute bottom-0 left-0 right-0 z-20 w-full px-5 md:px-12 lg:px-24 pb-5 [-webkit-app-region:no-drag]"
         onSubmit={(event) => {
@@ -2043,7 +2487,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
         }}
       >
         <div
-          className={`flex flex-col w-full rounded-3xl border transition px-1 bg-[#131313]/74 backdrop-blur-xl backdrop-saturate-150 text-[#e5e5e5] shadow-[0_20px_55px_rgba(0,0,0,0.5)] ${isComposerDragging ? 'border-[#9ac1ff] bg-[#1a1a1a]/90' : 'border-white/20 hover:border-white/30 focus-within:border-white/40'}`}
+          className={`flex flex-col w-full rounded-3xl border transition px-1 bg-[#151515]/96 text-[#e5e5e5] shadow-[0_20px_55px_rgba(0,0,0,0.5)] ${isComposerDragging ? 'border-[#9ac1ff] bg-[#1a1a1a]' : 'border-white/20 hover:border-white/30 focus-within:border-white/40'}`}
           dir="auto"
           onDragOver={(event) => {
             if (!Array.from(event.dataTransfer?.types ?? []).includes('Files')) {
@@ -2188,85 +2632,67 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
           <div className="flex items-center justify-between mb-2.5 mx-1 border-t border-[#2c2c2c] pt-2">
             <div className="flex items-center gap-1.5">
               <div className="relative flex items-center" ref={modelMenuRef}>
-                <button
-                  type="button"
-                  className="rounded-lg px-2 py-1.5 text-sm text-[#878787] outline-none hover:bg-white/8 hover:text-[#d0d0d0] inline-flex items-center gap-1.5 w-auto justify-between transition-colors duration-200"
-                  onClick={() => setModelMenuOpen((prev) => !prev)}
-                  aria-haspopup="listbox"
-                  aria-expanded={modelMenuOpen}
-                >
-                  <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
-                    <ProviderGlyph providerKey={selectedModelMeta.providerKey} className="h-3.5 w-3.5 text-[#bdbdbd]" />
-                    <span>{selectedModelMeta.modelName}</span>
-                  </span>
-                  <ChevronDown className="h-3.5 w-3.5" />
-                </button>
+                {isLoadingOpenCodeMeta ? (
+                  <div className="inline-flex items-center gap-1.5 px-2 py-1.5 text-sm text-[#878787]">
+                    <ProviderGlyph
+                      providerKey={extractModelMeta('OpenCode/loading', 'opencode/loading', 'opencode').providerKey}
+                      className="h-3.5 w-3.5 text-[#bdbdbd]"
+                    />
+                    <span className="ai-compacting-shimmer tracking-[0.02em]">Loading OpenCode</span>
+                  </div>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className="rounded-lg px-2 py-1.5 text-sm text-[#878787] outline-none hover:bg-white/8 hover:text-[#d0d0d0] inline-flex items-center gap-1.5 w-auto justify-between transition-colors duration-200"
+                      onClick={() => setModelMenuOpen((prev) => !prev)}
+                      aria-haspopup="listbox"
+                      aria-expanded={modelMenuOpen}
+                    >
+                      <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                        <ProviderGlyph providerKey={selectedModelMeta.providerKey} className="h-3.5 w-3.5 text-[#bdbdbd]" />
+                        <span>{selectedModelMeta.modelName}</span>
+                      </span>
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    </button>
 
-                <div className="relative" ref={modeMenuRef}>
-                  <button
-                    type="button"
-                    className="rounded-lg px-2 py-1.5 text-sm text-[#878787] outline-none hover:bg-white/8 hover:text-[#d0d0d0] inline-flex items-center gap-1.5 w-auto justify-between transition-colors duration-200"
-                    onClick={() => setActiveMetaPopover((prev) => (prev === 'access' ? null : 'access'))}
-                    aria-haspopup="listbox"
-                    aria-expanded={activeMetaPopover === 'access'}
-                  >
-                    <span>{modeLabel}</span>
-                    <ChevronDown className="h-3.5 w-3.5" />
-                  </button>
+                    <div className="relative" ref={modeMenuRef}>
+                      <button
+                        type="button"
+                        className="rounded-lg px-2 py-1.5 text-sm text-[#878787] outline-none hover:bg-white/8 hover:text-[#d0d0d0] inline-flex items-center gap-1.5 w-auto justify-between transition-colors duration-200"
+                        onClick={() => setActiveMetaPopover((prev) => (prev === 'access' ? null : 'access'))}
+                        aria-haspopup="listbox"
+                        aria-expanded={activeMetaPopover === 'access'}
+                      >
+                        <span>{modeLabel}</span>
+                        <ChevronDown className="h-3.5 w-3.5" />
+                      </button>
 
-                  {activeMetaPopover === 'access' ? (
-                    <div className="absolute left-0 bottom-[calc(100%+8px)] w-[280px] max-w-[70vw] rounded-xl border border-[#363636] bg-[#181818] p-1.5 shadow-[0_16px_40px_rgba(0,0,0,0.45)] z-40" role="listbox">
-                      <div className="grid gap-1">
-                        {modeOptions.length > 0 ? modeOptions.map((mode) => {
-                          const active = mode.id === selectedModeId
-                          return (
-                            <button
-                              key={mode.id}
-                              type="button"
-                              className={`w-full rounded-lg px-2.5 py-2 text-left transition-colors ${active ? 'bg-white/12 text-[#efefef]' : 'text-[#c4c4c4] hover:bg-[#2a2a2a]'}`}
-                              onClick={() => {
-                                updateTab((current) => ({
-                                  ...current,
-                                  acpModeId: mode.id,
-                                }))
-
-                                if (!selectedProvider) {
-                                  setActiveMetaPopover(null)
-                                  return
-                                }
-
-                                void window.argent.ai
-                                  .setMode({
-                                    providerId: selectedProvider.id,
-                                    cwd,
-                                    sessionId: tabRef.current.acpSessionId || undefined,
-                                    modeId: mode.id,
-                                  })
-                                  .then((result) => {
-                                    updateTab((current) => ({
-                                      ...current,
-                                      acpSessionId: result.sessionId,
-                                      acpModeId: result.modeId,
-                                    }))
-                                  })
-                                  .catch(() => {
-                                    // no-op
-                                  })
-
-                                setActiveMetaPopover(null)
-                              }}
-                            >
-                              <div className="text-[13px] font-medium">{displayModeName(mode)}</div>
-                              {mode.description ? <div className="mt-0.5 text-[11px] text-[#898989]">{mode.description}</div> : null}
-                            </button>
-                          )
-                        }) : (
-                          <div className="px-2.5 py-2 text-[12px] text-[#8f8f8f]">Modes unavailable</div>
-                        )}
-                      </div>
+                      {activeMetaPopover === 'access' ? (
+                        <div className="absolute left-0 bottom-[calc(100%+8px)] w-[280px] max-w-[70vw] rounded-xl border border-[#363636] bg-[#181818] p-1.5 shadow-[0_16px_40px_rgba(0,0,0,0.45)] z-40" role="listbox">
+                          <div className="grid gap-1">
+                            {modeOptions.length > 0 ? modeOptions.map((mode) => {
+                              const active = mode.id === selectedModeId
+                              return (
+                                <button
+                                  key={mode.id}
+                                  type="button"
+                                  className={`w-full rounded-lg px-2.5 py-2 text-left transition-colors ${active ? 'bg-white/12 text-[#efefef]' : 'text-[#c4c4c4] hover:bg-[#2a2a2a]'}`}
+                                  onClick={() => selectMode(mode)}
+                                >
+                                  <div className="text-[13px] font-medium">{displayModeName(mode)}</div>
+                                  {mode.description ? <div className="mt-0.5 text-[11px] text-[#898989]">{mode.description}</div> : null}
+                                </button>
+                              )
+                            }) : (
+                              <div className="px-2.5 py-2 text-[12px] text-[#8f8f8f]">Modes unavailable</div>
+                            )}
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
-                  ) : null}
-                </div>
+                  </>
+                )}
 
                 <button type="button" className="bg-transparent hover:bg-white/8 text-[#b8b8b8] transition rounded-full p-1.5 outline-none" onClick={addFileAttachment} aria-label="Add file">
                     <Plus className="h-4 w-4" />
@@ -2320,8 +2746,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
                                             className="truncate text-left"
                                             onClick={() => {
                                               if (!selectedVariant) return
-                                              updateTab((current) => ({ ...current, model: selectedVariant.id }))
-                                              setModelMenuOpen(false)
+                                              selectModel(selectedVariant.id)
                                             }}
                                           >
                                             {family.name}
@@ -2335,7 +2760,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
                                                   type="button"
                                                   className={`rounded-md border px-1.5 py-0.5 text-[10px] ${selectedModelValue === variant.id ? 'border-[#6e6e6e] bg-[#3a3a3a] text-[#efefef]' : 'border-[#3d3d3d] bg-[#242424] text-[#9f9f9f] hover:bg-[#2b2b2b]'}`}
                                                   onClick={() => {
-                                                    updateTab((current) => ({ ...current, model: variant.id }))
+                                                    selectModel(variant.id)
                                                   }}
                                                 >
                                                   {effortLabel(variant.effort)}
@@ -2360,7 +2785,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
             </div>
 
             <div className="flex items-center gap-1.5">
-              {(() => {
+              {!isLoadingOpenCodeMeta ? (() => {
                 const limit = resolvedContextWindow ?? 0
                 const validLimit = limit > 0
                 const percentage = Math.min(100, Math.max(0, (usedTokens / limit) * 100))
@@ -2413,7 +2838,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
                     ) : null}
                   </div>
                 )
-              })()}
+              })() : null}
 
               {loading ? (
                 <button
@@ -2439,6 +2864,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
           </div>
         </div>
       </form>
+      ) : null}
     </section>
   )
 }

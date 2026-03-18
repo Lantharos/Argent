@@ -12,6 +12,33 @@ let copilotRuntimePromise = null
 const openCodeRuntimeByCwd = new Map()
 const MODEL_CACHE_TTL_MS = 5 * 60 * 1000
 
+const openCodeInstallMethods = [
+  {
+    id: 'bun',
+    command: 'bun',
+    args: ['add', '-g', 'opencode-ai'],
+    label: 'Install with bun',
+    detail: 'bun add -g opencode-ai',
+    platforms: ['win32', 'darwin', 'linux'],
+  },
+  {
+    id: 'npm',
+    command: 'npm',
+    args: ['i', '-g', 'opencode-ai'],
+    label: 'Install with npm',
+    detail: 'npm i -g opencode-ai',
+    platforms: ['win32', 'darwin', 'linux'],
+  },
+  {
+    id: 'brew',
+    command: 'brew',
+    args: ['install', 'anomalyco/tap/opencode'],
+    label: 'Install with Homebrew',
+    detail: 'brew install anomalyco/tap/opencode',
+    platforms: ['darwin', 'linux'],
+  },
+]
+
 function commandExists(command) {
   const checker = process.platform === 'win32' ? 'where' : 'which'
   const probe = spawnSync(checker, [command], {
@@ -29,6 +56,73 @@ function spawnCliProcess(command, args, options = {}) {
     shell: useShell,
     ...options,
   })
+}
+
+function getAvailableOpenCodeInstallMethods() {
+  return openCodeInstallMethods
+    .filter((method) => method.platforms.includes(process.platform) && commandExists(method.command))
+    .map((method) => ({
+      id: method.id,
+      label: method.label,
+      detail: method.detail,
+    }))
+}
+
+export async function getOpenCodeCliStatus() {
+  const installed = commandExists('opencode')
+  let version = null
+
+  if (installed) {
+    try {
+      const { stdout } = await execAsync('opencode --version', { windowsHide: true })
+      version = stdout.trim() || null
+    } catch {
+      version = null
+    }
+  }
+
+  return {
+    installed,
+    version,
+    installMethods: getAvailableOpenCodeInstallMethods(),
+  }
+}
+
+export async function installOpenCodeCli(payload) {
+  const methodId = typeof payload?.methodId === 'string' ? payload.methodId : ''
+  const method = openCodeInstallMethods.find((entry) => entry.id === methodId)
+
+  if (!method || !method.platforms.includes(process.platform)) {
+    throw new Error('Unsupported OpenCode install method.')
+  }
+
+  if (!commandExists(method.command)) {
+    throw new Error(`${method.command} is not available on this system.`)
+  }
+
+  await new Promise((resolve, reject) => {
+    const child = spawnCliProcess(method.command, method.args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+
+    let stderr = ''
+    child.stdout?.on('data', () => {
+      // ignore
+    })
+    child.stderr?.on('data', (chunk) => {
+      stderr += String(chunk)
+    })
+    child.once('error', reject)
+    child.once('exit', (code) => {
+      if (code === 0) {
+        resolve(true)
+        return
+      }
+      reject(new Error(stderr.trim() || `${method.command} exited with code ${code ?? 'unknown'}`))
+    })
+  })
+
+  return getOpenCodeCliStatus()
 }
 
 function createJsonRpcConnection(proc) {
@@ -152,7 +246,7 @@ function asNonNegativeNumber(value) {
   return null
 }
 
-function normalizeAcpUsageSnapshot(value) {
+function normalizeAcpUsageSnapshot(value, previousSnapshot = null) {
   if (!value || typeof value !== 'object') {
     return null
   }
@@ -173,17 +267,31 @@ function normalizeAcpUsageSnapshot(value) {
     asNonNegativeNumber(usage.size) ??
     asNonNegativeNumber(usage.model_context_window ?? usage.modelContextWindow)
 
-  if (used === null && size === null) {
+  const previousUsed = previousSnapshot && typeof previousSnapshot === 'object'
+    ? asNonNegativeNumber(previousSnapshot.total_tokens ?? previousSnapshot.totalTokens ?? previousSnapshot.used)
+    : null
+  const previousSize = previousSnapshot && typeof previousSnapshot === 'object'
+    ? asNonNegativeNumber(
+        previousSnapshot.model_context_window ??
+          previousSnapshot.modelContextWindow ??
+          previousSnapshot.size,
+      )
+    : null
+
+  const mergedUsed = used ?? previousUsed
+  const mergedSize = size ?? previousSize
+
+  if (mergedUsed === null && mergedSize === null) {
     return null
   }
 
   return {
-    total_tokens: used,
-    model_context_window: size,
-    last_token_usage: used === null
+    total_tokens: mergedUsed,
+    model_context_window: mergedSize,
+    last_token_usage: mergedUsed === null
       ? undefined
       : {
-          total_tokens: used,
+          total_tokens: mergedUsed,
         },
   }
 }
@@ -1453,7 +1561,7 @@ async function requestViaOpenCodeAcp(parsed, provider, emitEvent = () => {}, opt
         })
       }
 
-      const promptUsage = normalizeAcpUsageSnapshot(promptResult?.usage)
+      const promptUsage = normalizeAcpUsageSnapshot(promptResult?.usage, latestUsage)
       if (promptUsage) {
         latestUsage = promptUsage
         runtime.sessionUsageById.set(sessionId, promptUsage)

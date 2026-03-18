@@ -39,6 +39,8 @@ contextBridge.exposeInMainWorld('argent', {
     listCommands: (payload) => ipcRenderer.invoke('ai:list-commands', payload),
     listModes: (payload) => ipcRenderer.invoke('ai:list-modes', payload),
     setMode: (payload) => ipcRenderer.invoke('ai:set-mode', payload),
+    getCliStatus: () => ipcRenderer.invoke('ai:get-cli-status'),
+    installCli: (payload) => ipcRenderer.invoke('ai:install-cli', payload),
     onStreamEvent: (callback) => on('ai:stream-event', callback),
   },
   terminal: {

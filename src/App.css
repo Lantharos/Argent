@@ -65,25 +65,6 @@
     }
   }
 
-  @keyframes ai-compacting-shimmer {
-    0% {
-      background-position: 100% 50%;
-    }
-    100% {
-      background-position: 0% 50%;
-    }
-  }
-
-  .ai-compacting-shimmer {
-    color: transparent;
-    background-image: linear-gradient(90deg, #6b7280 0%, #e5e7eb 45%, #7c8591 100%);
-    background-size: 220% 100%;
-    background-position: 100% 50%;
-    background-clip: text;
-    -webkit-background-clip: text;
-    animation: ai-compacting-shimmer 1.2s linear infinite;
-  }
-
   .browser-frame,
   .editor-frame,
   .terminal-frame {
@@ -130,6 +111,89 @@
 
   .ai-tab .pane-head {
     @apply border-b border-white/10;
+  }
+
+  @keyframes ai-compacting-shimmer {
+    0% {
+      background-position: 100% 50%;
+    }
+    100% {
+      background-position: 0% 50%;
+    }
+  }
+
+  @keyframes ai-message-rise {
+    0% {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes ai-thinking-sheen {
+    0% {
+      opacity: 0;
+      transform: translateX(-130%);
+    }
+    24% {
+      opacity: 0.32;
+    }
+    100% {
+      opacity: 0;
+      transform: translateX(130%);
+    }
+  }
+
+  @keyframes ai-caret-blink {
+    0%, 45% {
+      opacity: 1;
+    }
+    60%, 100% {
+      opacity: 0.2;
+    }
+  }
+
+  .ai-compacting-shimmer {
+    color: transparent;
+    background-image: linear-gradient(90deg, #737373 0%, #d4d4d4 45%, #8a8a8a 100%);
+    background-size: 220% 100%;
+    background-position: 100% 50%;
+    background-clip: text;
+    -webkit-background-clip: text;
+    animation: ai-compacting-shimmer 1.2s linear infinite;
+  }
+
+  .ai-message-enter {
+    animation: ai-message-rise 220ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+
+  .ai-thinking-block {
+    position: relative;
+    overflow: hidden;
+    animation: ai-message-rise 280ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+
+  .ai-thinking-block.ai-thinking-active::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.08) 48%, transparent 100%);
+    pointer-events: none;
+    animation: ai-thinking-sheen 1.7s ease-in-out infinite;
+  }
+
+  .ai-stream-caret {
+    display: inline-block;
+    width: 0.6ch;
+    height: 1.05em;
+    margin-left: 2px;
+    border-radius: 999px;
+    background: currentColor;
+    vertical-align: -0.12em;
+    animation: ai-caret-blink 1s step-end infinite;
   }
 
   .ai-tab * {

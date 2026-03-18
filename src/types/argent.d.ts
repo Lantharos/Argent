@@ -229,6 +229,8 @@ declare global {
         listCommands: (payload: { providerId: string; cwd?: string; sessionId?: string }) => Promise<Array<{ name: string; description?: string }>>
         listModes: (payload: { providerId: string; cwd?: string; sessionId?: string }) => Promise<{ sessionId: string | null; currentModeId: string | null; modes: Array<{ id: string; name: string; description?: string }> }>
         setMode: (payload: { providerId: string; cwd?: string; sessionId?: string; modeId: string }) => Promise<{ sessionId: string; modeId: string }>
+        getCliStatus: () => Promise<{ installed: boolean; version: string | null; installMethods: Array<{ id: string; label: string; detail: string }> }>
+        installCli: (payload: { methodId: string }) => Promise<{ installed: boolean; version: string | null; installMethods: Array<{ id: string; label: string; detail: string }> }>
         onStreamEvent: (callback: (payload: { requestId: string; event: AIStreamEvent }) => void) => () => void
       }
       terminal: {

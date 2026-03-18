@@ -13,6 +13,8 @@ import {
 } from './store/providersStore.js'
 import { providerSchema } from './ai/schema.js'
 import {
+  getOpenCodeCliStatus,
+  installOpenCodeCli,
   listAssistantCommands,
   listAssistantModels,
   listAssistantModes,
@@ -342,6 +344,8 @@ function setupIpc() {
   ipcMain.handle('ai:list-commands', async (_, payload) => listAssistantCommands(payload))
   ipcMain.handle('ai:list-modes', async (_, payload) => listAssistantModes(payload))
   ipcMain.handle('ai:set-mode', async (_, payload) => setAssistantMode(payload))
+  ipcMain.handle('ai:get-cli-status', async () => getOpenCodeCliStatus())
+  ipcMain.handle('ai:install-cli', async (_, payload) => installOpenCodeCli(payload))
 
   ipcMain.handle('terminal:create', (_, cwd) => terminalManager.createSession(cwd))
 
