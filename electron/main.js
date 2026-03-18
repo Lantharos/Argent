@@ -3,6 +3,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
+import electronUpdater from 'electron-updater'
 import { loadState, saveState } from './store/stateStore.js'
 import {
   ensureDefaultProviders,
@@ -25,9 +26,11 @@ import { setupGitHandlers } from './git/gitManager.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
+const { autoUpdater } = electronUpdater
 
 const rendererUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173'
 const isDev = !app.isPackaged && Boolean(process.env.VITE_DEV_SERVER_URL)
+const windowIconPath = path.join(__dirname, 'assets', 'icon.png')
 
 let windowRef = null
 let terminalManager = null
@@ -35,6 +38,55 @@ let languageServerManager = null
 const activeAIStreams = new Map()
 const DEFAULT_WINDOW_WIDTH = 1400
 const DEFAULT_WINDOW_HEIGHT = 900
+const AUTO_UPDATE_INTERVAL_MS = 6 * 60 * 60 * 1000
+
+function checkForUpdates() {
+  return autoUpdater.checkForUpdatesAndNotify().catch(error => {
+    console.error('Auto-update check failed:', error)
+    return null
+  })
+}
+
+function setupAutoUpdater() {
+  if (!app.isPackaged) {
+    return
+  }
+
+  autoUpdater.autoDownload = true
+  autoUpdater.autoInstallOnAppQuit = true
+
+  autoUpdater.on('error', error => {
+    console.error('Auto-updater error:', error)
+  })
+
+  autoUpdater.on('update-downloaded', async info => {
+    if (!windowRef || windowRef.isDestroyed()) {
+      return
+    }
+
+    const { response } = await dialog.showMessageBox(windowRef, {
+      type: 'info',
+      buttons: ['Restart now', 'Later'],
+      defaultId: 0,
+      cancelId: 1,
+      title: 'Update ready',
+      message: 'A new Argent update is ready to install.',
+      detail: `Version ${info.version} has been downloaded and will be applied after restart.`,
+    })
+
+    if (response === 0) {
+      autoUpdater.quitAndInstall()
+    }
+  })
+
+  setTimeout(() => {
+    void checkForUpdates()
+  }, 10_000)
+
+  setInterval(() => {
+    void checkForUpdates()
+  }, AUTO_UPDATE_INTERVAL_MS)
+}
 
 function createMainWindow() {
   const isWindows = process.platform === 'win32'
@@ -61,6 +113,7 @@ function createMainWindow() {
     vibrancy: isMac ? 'under-window' : undefined,
     visualEffectState: isMac ? 'active' : undefined,
     roundedCorners: true,
+    icon: isMac ? undefined : windowIconPath,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false,
@@ -391,6 +444,7 @@ app.whenReady().then(() => {
   ensureDefaultProviders()
   setupWebviewHardening()
   windowRef = createMainWindow()
+  setupAutoUpdater()
   terminalManager = new TerminalManager((channel, payload) => {
     if (windowRef && !windowRef.isDestroyed()) {
       windowRef.webContents.send(channel, payload)

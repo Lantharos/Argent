@@ -1,14 +1,23 @@
 {
   "name": "argent",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "main": "electron/main.js",
   "scripts": {
     "dev": "vite",
-    "dev:desktop": "concurrently \"bun run dev\" \"wait-on http://localhost:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron ./electron/main.js\"",
-    "start:desktop": "electron ./electron/main.js",
+    "build:icons": "node ./scripts/generate-icons.mjs",
+    "dev:desktop": "bun run build:icons && concurrently \"bun run dev\" \"wait-on http://localhost:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron ./electron/main.js\"",
+    "start:desktop": "bun run build:icons && electron ./electron/main.js",
     "build": "tsc -b && vite build",
+    "rebuild:native": "electron-builder install-app-deps",
+    "dist": "bun run build:icons && bun run build && bun run rebuild:native && electron-builder",
+    "dist:win": "bun run build:icons && bun run build && bun run rebuild:native && electron-builder --win nsis",
+    "dist:mac": "bun run build:icons && bun run build && bun run rebuild:native && electron-builder --mac dmg",
+    "dist:linux": "bun run build:icons && bun run build && bun run rebuild:native && electron-builder --linux AppImage",
+    "release:win": "bun run build:icons && bun run build && bun run rebuild:native && electron-builder --win nsis --publish always",
+    "release:linux": "bun run build:icons && bun run build && bun run rebuild:native && electron-builder --linux AppImage --publish always",
+    "publish:github": "bun run build:icons && bun run build && bun run rebuild:native && electron-builder --publish always",
     "lint": "eslint .",
     "preview": "vite preview"
   },
@@ -22,6 +31,7 @@
     "react-markdown": "^10.1.0",
     "remark-breaks": "^4.0.0",
     "remark-gfm": "^4.0.1",
+    "electron-updater": "^6.8.3",
     "uuid": "^13.0.0",
     "vscode-jsonrpc": "^8.2.1",
     "xterm": "^5.3.0",
@@ -39,14 +49,68 @@
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
     "electron": "^41.0.2",
+    "electron-builder": "^26.8.1",
     "eslint": "^9.39.4",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.4.0",
+    "sharp": "^0.34.5",
     "tailwindcss": "^4.2.1",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.56.1",
     "vite": "^8.0.0",
     "wait-on": "^9.0.4"
+  },
+  "build": {
+    "appId": "com.lantharos.argent",
+    "productName": "Argent",
+    "directories": {
+      "buildResources": "build",
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/node-pty/**/*"
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "lantharos",
+        "repo": "argent",
+        "releaseType": "release"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "license": "build/license.txt"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.developer-tools",
+      "icon": "build/icon.png"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb",
+        "rpm"
+      ],
+      "category": "Development",
+      "icon": "build/icon.png"
+    }
   }
 }
