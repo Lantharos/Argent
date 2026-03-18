@@ -1,4 +1,7 @@
-# <img src="./public/icon.svg" width="32" style="vertical-align: bottom;" /> Argent
+<h1 style="display: flex; align-items: center; gap: 8px;">
+  <img src="./public/icon.svg" width="32" />
+  Argent
+</h1>
 
 A browser for building things.
 
