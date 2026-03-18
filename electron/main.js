@@ -233,6 +233,35 @@ function setupIpc() {
     return true
   })
 
+  ipcMain.handle('window:get-bounds', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win || win.isDestroyed()) {
+      return null
+    }
+
+    const bounds = win.getBounds()
+    return {
+      ...bounds,
+      isMaximized: win.isMaximized(),
+    }
+  })
+
+  ipcMain.handle('window:set-position', (event, payload) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win || win.isDestroyed() || win.isMaximized()) {
+      return false
+    }
+
+    const x = Number.isFinite(payload?.x) ? Math.round(payload.x) : null
+    const y = Number.isFinite(payload?.y) ? Math.round(payload.y) : null
+    if (x === null || y === null) {
+      return false
+    }
+
+    win.setPosition(x, y)
+    return true
+  })
+
   ipcMain.handle('window:set-native-controls-visible', (event, visible) => {
     const win = BrowserWindow.fromWebContents(event.sender)
     if (!win || win.isDestroyed() || process.platform !== 'win32') {

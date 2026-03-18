@@ -196,6 +196,8 @@ declare global {
         minimize: () => Promise<boolean>
         maximizeToggle: () => Promise<boolean>
         close: () => Promise<boolean>
+        getBounds: () => Promise<{ x: number; y: number; width: number; height: number; isMaximized: boolean } | null>
+        setPosition: (x: number, y: number) => Promise<boolean>
         setNativeControlsVisible: (visible: boolean) => Promise<boolean>
       }
       providers: {

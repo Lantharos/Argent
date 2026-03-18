@@ -24,6 +24,8 @@ contextBridge.exposeInMainWorld('argent', {
     minimize: () => ipcRenderer.invoke('window:minimize'),
     maximizeToggle: () => ipcRenderer.invoke('window:maximize-toggle'),
     close: () => ipcRenderer.invoke('window:close'),
+    getBounds: () => ipcRenderer.invoke('window:get-bounds'),
+    setPosition: (x, y) => ipcRenderer.invoke('window:set-position', { x, y }),
     setNativeControlsVisible: (visible) => ipcRenderer.invoke('window:set-native-controls-visible', visible),
   },
   providers: {

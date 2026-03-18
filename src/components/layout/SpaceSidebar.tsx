@@ -309,6 +309,7 @@ export function SpaceSidebar({
   const addSpaceButtonRef = useRef<HTMLButtonElement | null>(null)
   const spaceMenuRef = useRef<HTMLDivElement | null>(null)
   const addSpaceMenuRef = useRef<HTMLDivElement | null>(null)
+  const windowDragRef = useRef<{ pointerStartX: number; pointerStartY: number; windowStartX: number; windowStartY: number } | null>(null)
 
   useEffect(() => {
     function closeWhenOutside(event: MouseEvent) {
@@ -335,6 +336,33 @@ export function SpaceSidebar({
     return () => {
       document.removeEventListener('mousedown', closeWhenOutside, true)
       document.removeEventListener('contextmenu', closeWhenOutside, true)
+    }
+  }, [])
+
+  useEffect(() => {
+    function stopWindowDrag() {
+      windowDragRef.current = null
+    }
+
+    function moveWindow(event: MouseEvent) {
+      const dragState = windowDragRef.current
+      if (!dragState) {
+        return
+      }
+
+      const nextX = dragState.windowStartX + (event.screenX - dragState.pointerStartX)
+      const nextY = dragState.windowStartY + (event.screenY - dragState.pointerStartY)
+      void window.argent.window.setPosition(nextX, nextY)
+    }
+
+    window.addEventListener('mousemove', moveWindow)
+    window.addEventListener('mouseup', stopWindowDrag)
+    window.addEventListener('blur', stopWindowDrag)
+
+    return () => {
+      window.removeEventListener('mousemove', moveWindow)
+      window.removeEventListener('mouseup', stopWindowDrag)
+      window.removeEventListener('blur', stopWindowDrag)
     }
   }, [])
 
@@ -393,6 +421,37 @@ export function SpaceSidebar({
 
   function signalUiInteraction() {
     window.dispatchEvent(new Event('argent:ui-interaction'))
+  }
+
+  function canStartWindowDrag(target: EventTarget | null) {
+    if (!(target instanceof Element)) {
+      return false
+    }
+
+    return !target.closest('.no-drag-region, button, input, textarea, [contenteditable="true"]')
+  }
+
+  function handleSidebarMouseDown(event: React.MouseEvent<HTMLElement>) {
+    signalUiInteraction()
+
+    if (event.button !== 0 || !canStartWindowDrag(event.target)) {
+      return
+    }
+
+    const { screenX, screenY } = event
+    void (async () => {
+      const bounds = await window.argent.window.getBounds()
+      if (!bounds || bounds.isMaximized) {
+        return
+      }
+
+      windowDragRef.current = {
+        pointerStartX: screenX,
+        pointerStartY: screenY,
+        windowStartX: bounds.x,
+        windowStartY: bounds.y,
+      }
+    })()
   }
 
   function openSpaceMenuAt(spaceId: string, x: number, y: number) {
@@ -526,11 +585,11 @@ export function SpaceSidebar({
   return (
     <aside
       ref={sidebarRef}
-      className="w-[292px] flex-shrink-0 flex flex-col pt-3 pb-3 px-3 gap-3 bg-black/26 backdrop-blur-2xl relative"
-      onMouseDownCapture={signalUiInteraction}
+      className="drag-region w-[292px] flex-shrink-0 flex flex-col pt-3 pb-3 px-3 gap-3 bg-black/26 backdrop-blur-2xl relative"
+      onMouseDownCapture={handleSidebarMouseDown}
       onContextMenuCapture={signalUiInteraction}
     >
-      <div className="flex items-center justify-between px-2">
+      <div className="no-drag-region flex items-center justify-between px-2">
         <div className="text-sm font-semibold text-[#d0d0d0] tracking-wide">Argent</div>
         <button
           ref={addSpaceButtonRef}
@@ -544,7 +603,7 @@ export function SpaceSidebar({
       {addSpaceMenu ? (
         <div
           ref={addSpaceMenuRef}
-          className={`absolute z-50 bg-[#141414]/90 backdrop-blur-xl border border-white/5 rounded-md shadow-2xl py-1.5 text-[12px] text-[#a3a3a3] ${cloneMode ? 'w-64' : 'w-48'}`}
+          className={`no-drag-region absolute z-50 bg-[#141414]/90 backdrop-blur-xl border border-white/5 rounded-md shadow-2xl py-1.5 text-[12px] text-[#a3a3a3] ${cloneMode ? 'w-64' : 'w-48'}`}
           style={{
             right: 6,
             top: addSpaceMenu.y,
@@ -666,11 +725,11 @@ export function SpaceSidebar({
         </div>
       ) : null}
 
-      <div className="flex flex-col gap-1 px-1">
+      <div className="drag-region flex flex-col gap-1 px-1">
         <div className="text-[12px] font-medium text-[#7e7e7e] px-1">Projects</div>
       </div>
 
-      <div className="flex flex-col gap-0.5 overflow-auto pr-1">
+      <div className="drag-region flex flex-col gap-0.5 overflow-auto pr-1">
         {spaces.map((space) => {
           const isActive = space.id === activeSpaceId
           const isCollapsed = existingSpaceIds.has(space.id) && collapsedSpaceIds.includes(space.id)
@@ -690,8 +749,8 @@ export function SpaceSidebar({
           const entries = buildSidebarEntries(space)
 
           return (
-            <div key={space.id} className="flex flex-col">
-              <div className={`group relative w-full rounded-lg transition-colors ${isActive ? 'bg-white/10' : 'hover:bg-white/8'}`}>
+            <div key={space.id} className="drag-region flex flex-col">
+              <div className={`drag-region group relative w-full rounded-lg transition-colors ${isActive ? 'bg-white/10' : 'hover:bg-white/8'}`}>
                 <button
                   className={`w-full text-[13px] px-2.5 pr-8 py-1.5 rounded-lg transition-colors flex items-center gap-2 font-medium cursor-pointer text-left ${isActive ? 'text-[#f1f1f1]' : 'text-[#b6b6b6]'}`}
                   onClick={() => {
@@ -740,7 +799,7 @@ export function SpaceSidebar({
               </div>
 
               {showCollapsedPreview && activeSpaceTab ? (
-                <div className="flex flex-col mt-1 mb-2 ml-4 pl-3 border-l border-white/12">
+                <div className="drag-region flex flex-col mt-1 mb-2 ml-4 pl-3 border-l border-white/12">
                   {activeGroupTabs.length >= 2 ? (
                     <div className="rounded-md bg-white/9 border border-white/10 p-1 grid grid-cols-2 gap-1">
                       {activeGroupTabs.map((tab) => (
@@ -805,19 +864,19 @@ export function SpaceSidebar({
               ) : null}
 
               {!isCollapsed ? (
-                <div className="flex flex-col gap-0.5 mt-1 mb-2 ml-4 pl-3 border-l border-white/12">
+                <div className="drag-region flex flex-col gap-0.5 mt-1 mb-2 ml-4 pl-3 border-l border-white/12">
                   {entries.map((entry) => {
                     if (entry.type === 'group') {
                       const isGroupActive = isActive && entry.tabs.some((tab) => tab.id === space.activeTabId)
                       const gridCols = entry.tabs.length >= 4 ? 'grid-cols-2' : entry.tabs.length === 3 ? 'grid-cols-3' : 'grid-cols-2'
 
                       return (
-                        <div key={entry.groupId} className={`group relative rounded-xl border transition-all ${isGroupActive ? 'border-white/16 bg-white/8' : 'border-white/8 bg-white/4 hover:bg-white/8 hover:border-white/14'}`}>
-                          <div className={`grid ${gridCols} gap-1 p-1`}>
+                        <div key={entry.groupId} className={`drag-region group relative rounded-xl border transition-all ${isGroupActive ? 'border-white/16 bg-white/8' : 'border-white/8 bg-white/4 hover:bg-white/8 hover:border-white/14'}`}>
+                          <div className={`drag-region grid ${gridCols} gap-1 p-1`}>
                             {entry.tabs.slice(0, 4).map((tab) => (
                               <div
                                 key={tab.id}
-                                className="group/tab relative"
+                                className="no-drag-region group/tab relative"
                                 onDragOver={(event) => event.preventDefault()}
                                 onDrop={() => onTabDrop(space.id, tab.id)}
                               >
@@ -878,7 +937,7 @@ export function SpaceSidebar({
                     return (
                       <div
                         key={tab.id}
-                        className="flex items-center relative group"
+                        className="no-drag-region flex items-center relative group"
                         onDragOver={(event) => event.preventDefault()}
                         onDrop={() => onTabDrop(space.id, tab.id)}
                       >
@@ -950,7 +1009,7 @@ export function SpaceSidebar({
                     )
                   })}
 
-                  <div className="flex flex-col gap-1 mt-1.5 px-1">
+                  <div className="no-drag-region flex flex-col gap-1 mt-1.5 px-1">
                     <div className="text-[11px] text-[#7b7b7b] px-2">New Tab</div>
                     <div className="flex gap-1 pl-2">
                       <button
@@ -1004,7 +1063,7 @@ export function SpaceSidebar({
       {visibleSpaceMenu ? (
         <div
           ref={spaceMenuRef}
-          className="absolute z-50 bg-[#141414]/90 backdrop-blur-xl border border-white/5 rounded-md shadow-2xl py-1.5 w-48 text-[12px] text-[#a3a3a3]"
+          className="no-drag-region absolute z-50 bg-[#141414]/90 backdrop-blur-xl border border-white/5 rounded-md shadow-2xl py-1.5 w-48 text-[12px] text-[#a3a3a3]"
           style={{ left: visibleSpaceMenu.x, top: visibleSpaceMenu.y }}
         >
           <button

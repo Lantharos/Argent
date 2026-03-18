@@ -3,7 +3,19 @@
 @layer components {
   .app-shell {
     @apply flex h-screen w-screen bg-transparent text-[#bebebe] overflow-hidden font-sans relative;
+    app-region: drag;
     -webkit-app-region: drag;
+  }
+
+  .drag-region {
+    app-region: drag;
+    -webkit-app-region: drag;
+    user-select: none;
+  }
+
+  .no-drag-region {
+    app-region: no-drag;
+    -webkit-app-region: no-drag;
   }
 
   .workspace {
@@ -197,6 +209,7 @@
   }
 
   .ai-tab * {
+    app-region: no-drag;
     -webkit-app-region: no-drag;
   }
 
@@ -205,16 +218,19 @@
   }
 
   .git-tab * {
+    app-region: no-drag;
     -webkit-app-region: no-drag;
   }
 
 
   .browser-webview {
+    app-region: no-drag;
     -webkit-app-region: no-drag;
   }
 
   .browser-top-controls,
   .browser-top-controls * {
+    app-region: no-drag !important;
     -webkit-app-region: no-drag !important;
   }
 
@@ -225,6 +241,7 @@
   .browser-frame,
   .editor-frame,
   .terminal-frame {
+    app-region: no-drag;
     -webkit-app-region: no-drag;
   }
 }
