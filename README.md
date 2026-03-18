@@ -1,5 +1,5 @@
 <h1 style="display: flex; align-items: center; gap: 8px;">
-  <img src="./public/icon.svg" width="32" />
+  <img src="./public/icon.svg" width="32" height="32" />
   Argent
 </h1>
 
