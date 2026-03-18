@@ -982,17 +982,22 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
 
     updateTab((current) => {
       const messages = [...current.messages]
-      const last = messages.at(-1)
-      const isMetaLine =
-        last?.role === 'assistant' &&
-        typeof last?.content === 'string' &&
-        (last.content.startsWith('[[tool]]') || last.content.startsWith('[[thought]]') || last.content.startsWith('[[plan]]'))
+      const existingIndex = activeAssistantMessageIndexRef.current
+      const existingMessage =
+        typeof existingIndex === 'number' && existingIndex >= 0 && existingIndex < messages.length
+          ? messages[existingIndex]
+          : null
+      const existingIsMetaLine =
+        existingMessage?.role === 'assistant' &&
+        typeof existingMessage.content === 'string' &&
+        (existingMessage.content.startsWith('[[tool]]') ||
+          existingMessage.content.startsWith('[[thought]]') ||
+          existingMessage.content.startsWith('[[plan]]'))
 
-      if (last && last.role === 'assistant' && !isMetaLine) {
-        activeAssistantMessageIndexRef.current = messages.length - 1
-        messages[messages.length - 1] = {
-          ...last,
-          content: `${last.content}${delta}`,
+      if (existingMessage && existingMessage.role === 'assistant' && !existingIsMetaLine && typeof existingIndex === 'number') {
+        messages[existingIndex] = {
+          ...existingMessage,
+          content: `${existingMessage.content}${delta}`,
         }
       } else {
         messages.push({ role: 'assistant', content: delta })
@@ -1154,7 +1159,11 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
           return
         }
 
-        if (shouldStartNewThoughtBlockRef.current) {
+        if (
+          shouldStartNewThoughtBlockRef.current &&
+          !isThoughtFlushActive &&
+          pendingThoughtTextRef.current.length === 0
+        ) {
           activeThoughtMessageIndexRef.current = null
           shouldStartNewThoughtBlockRef.current = false
         }
@@ -1341,7 +1350,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
       setIsAssistantFlushActive(false)
       setIsThoughtFlushActive(false)
     }
-  }, [cwd, enqueueAssistantDelta, enqueueThoughtDelta, selectedProvider, updateTab])
+  }, [cwd, enqueueAssistantDelta, enqueueThoughtDelta, isThoughtFlushActive, selectedProvider, updateTab])
 
   useEffect(() => {
     if (isStreamingUi) {
