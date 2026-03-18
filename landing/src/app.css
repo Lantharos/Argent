@@ -1,5 +1,6 @@
 @import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap");
 @import "tailwindcss";
+@import "lenis/dist/lenis.css";
 
 @theme {
     --font-sans: "Manrope", "Segoe UI", sans-serif;
@@ -27,6 +28,7 @@
                 transparent 24%
             ),
             linear-gradient(180deg, #0b0d11 0%, #0f1318 100%);
+        scrollbar-width: none;
     }
 
     a {
@@ -35,6 +37,11 @@
 
     button {
         font: inherit;
+    }
+
+    *::-webkit-scrollbar {
+        width: 0;
+        height: 0;
     }
 }
 

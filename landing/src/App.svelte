@@ -1,5 +1,6 @@
 <script lang="ts">
     import { onMount } from "svelte";
+    import Lenis from "lenis";
 
     const repoUrl = "https://github.com/Lantharos/Argent";
 
@@ -14,6 +15,7 @@
     let lastStoryChangeAt = 0;
     let isStoryHovered = false;
     let storyContainer: HTMLDivElement | null = null;
+    let scrollProgress = 0;
 
     async function downloadLatestWindowsRelease() {
         const headers = {
@@ -118,11 +120,24 @@
     }
 
     onMount(() => {
+        const lenis = new Lenis({
+            autoRaf: true,
+            smoothWheel: true,
+            wheelMultiplier: 0.9,
+            duration: 1.6,
+            easing: (t) => 1 - Math.pow(1 - t, 4),
+        });
+
+        lenis.on("scroll", ({ scroll, limit }) => {
+            scrollProgress = limit > 0 ? scroll / limit : 0;
+        });
+
         const onWheel = (event: WheelEvent) => handleStoryWheel(event);
         window.addEventListener("wheel", onWheel, { passive: false });
 
         return () => {
             window.removeEventListener("wheel", onWheel);
+            lenis.destroy();
         };
     });
 </script>
@@ -136,6 +151,16 @@
 </svelte:head>
 
 <div class="relative min-h-screen overflow-hidden bg-[#C7C3C0] scroll-smooth">
+    <div
+        aria-hidden="true"
+        class="fixed right-[18px] top-1/2 z-50 h-[220px] w-[10px] -translate-y-1/2 rounded-full bg-white/20 backdrop-blur-[2px]"
+    >
+        <div
+            class="absolute left-0 top-0 w-full rounded-full bg-[#726857] shadow-[0_6px_18px_rgba(84,77,67,0.32),inset_0_1px_0_rgba(255,255,255,0.22)] transition-transform duration-200"
+            style={`height: 58px; transform: translateY(${scrollProgress * 162}px);`}
+        ></div>
+    </div>
+
     <img src="/bg.jpg" alt="" class="absolute inset-0 w-full h-screen" />
 
     <div class="z-20 relative">
