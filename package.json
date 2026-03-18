@@ -2,6 +2,11 @@
   "name": "argent",
   "private": true,
   "version": "0.1.0",
+  "description": "Argent is a desktop coding workspace with AI chat, editor, terminal, browser, and git tools.",
+  "author": {
+    "name": "Lantharos",
+    "email": "hello@lantharos.com"
+  },
   "type": "module",
   "main": "electron/main.js",
   "scripts": {
@@ -101,7 +106,8 @@
         "dmg"
       ],
       "category": "public.app-category.developer-tools",
-      "icon": "build/icon.png"
+      "icon": "build/icon.png",
+      "identity": "-"
     },
     "linux": {
       "target": [
