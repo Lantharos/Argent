@@ -86,7 +86,7 @@
         "provider": "github",
         "owner": "lantharos",
         "repo": "argent",
-        "releaseType": "release"
+        "releaseType": "draft"
       }
     ],
     "win": {
