@@ -37,6 +37,25 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Install Visual Studio Spectre libs
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $installer = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vs_installer.exe'
+          $installPath = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
+          if (-not $installPath) {
+            throw 'Visual Studio installation path not found.'
+          }
+          Start-Process -FilePath $installer -ArgumentList @(
+            'modify',
+            '--installPath', $installPath,
+            '--add', 'Microsoft.VisualStudio.Component.VC.Runtimes.x86.x64.Spectre',
+            '--quiet',
+            '--norestart',
+            '--nocache'
+          ) -Wait -NoNewWindow
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
