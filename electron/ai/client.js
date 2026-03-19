@@ -3,14 +3,13 @@ import { getProviderSecret, listProviders } from '../store/providersStore.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { exec, spawn, spawnSync } from 'node:child_process'
-import { promisify } from 'node:util'
+import { spawn, spawnSync } from 'node:child_process'
 import readline from 'node:readline'
 
-const execAsync = promisify(exec)
 let copilotRuntimePromise = null
 const openCodeRuntimeByCwd = new Map()
 const MODEL_CACHE_TTL_MS = 5 * 60 * 1000
+const envPathKey = Object.keys(process.env).find((key) => key.toLowerCase() === 'path') || 'PATH'
 
 const openCodeInstallMethods = [
   {
@@ -39,17 +38,152 @@ const openCodeInstallMethods = [
   },
 ]
 
-function commandExists(command) {
+function splitPathEntries(value) {
+  return String(value || '')
+    .split(path.delimiter)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+}
+
+function joinUniquePathEntries(entries) {
+  const seen = new Set()
+  const unique = []
+
+  for (const entry of entries) {
+    const normalized = process.platform === 'win32' ? entry.toLowerCase() : entry
+    if (seen.has(normalized)) {
+      continue
+    }
+    seen.add(normalized)
+    unique.push(entry)
+  }
+
+  return unique.join(path.delimiter)
+}
+
+function buildLookupEnv(extraEntries = []) {
+  const currentEntries = splitPathEntries(process.env[envPathKey])
+  return {
+    ...process.env,
+    [envPathKey]: joinUniquePathEntries([...extraEntries, ...currentEntries]),
+  }
+}
+
+function ensureProcessPathIncludes(targetPath) {
+  if (!targetPath) {
+    return
+  }
+
+  process.env[envPathKey] = joinUniquePathEntries([
+    targetPath,
+    ...splitPathEntries(process.env[envPathKey]),
+  ])
+}
+
+function readCommandOutput(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawnCliProcess(command, args, options)
+    let stdout = ''
+    let stderr = ''
+
+    child.stdout?.on('data', (chunk) => {
+      stdout += String(chunk)
+    })
+    child.stderr?.on('data', (chunk) => {
+      stderr += String(chunk)
+    })
+    child.once('error', reject)
+    child.once('exit', (code) => {
+      if (code === 0) {
+        resolve({ stdout, stderr })
+        return
+      }
+      reject(new Error(stderr.trim() || stdout.trim() || `${command} exited with code ${code ?? 'unknown'}`))
+    })
+  })
+}
+
+function getNpmGlobalBinDir() {
+  const npmCommand = resolveCommandPath('npm')
+  if (!npmCommand) {
+    return null
+  }
+
+  const probe = spawnSync(npmCommand, ['prefix', '-g'], {
+    encoding: 'utf8',
+    env: buildLookupEnv(),
+    windowsHide: true,
+    shell: process.platform === 'win32',
+  })
+
+  if (probe.status !== 0) {
+    return null
+  }
+
+  const prefix = String(probe.stdout || '').trim()
+  if (!prefix) {
+    return null
+  }
+
+  return process.platform === 'win32' ? prefix : path.join(prefix, 'bin')
+}
+
+function getKnownGlobalBinDirs() {
+  const dirs = []
+  const homeDir = process.env.USERPROFILE || process.env.HOME || ''
+
+  if (homeDir) {
+    dirs.push(path.join(homeDir, '.bun', 'bin'))
+  }
+
+  const npmGlobalBinDir = getNpmGlobalBinDir()
+  if (npmGlobalBinDir) {
+    dirs.push(npmGlobalBinDir)
+  }
+
+  return dirs.filter((entry) => entry && fs.existsSync(entry))
+}
+
+function resolveCommandPath(command, extraEntries = []) {
   const checker = process.platform === 'win32' ? 'where' : 'which'
   const probe = spawnSync(checker, [command], {
+    encoding: 'utf8',
+    env: buildLookupEnv(extraEntries),
     windowsHide: true,
-    stdio: 'ignore',
+    stdio: ['ignore', 'pipe', 'ignore'],
   })
-  return probe.status === 0
+
+  if (probe.status !== 0) {
+    return null
+  }
+
+  const matches = String(probe.stdout || '')
+    .split(/\r?\n/g)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+
+  return matches[0] || null
+}
+
+function resolveOpenCodeCommand() {
+  const resolved = resolveCommandPath('opencode', getKnownGlobalBinDirs())
+  if (resolved) {
+    ensureProcessPathIncludes(path.dirname(resolved))
+  }
+  return resolved
+}
+
+function commandExists(command) {
+  if (command === 'opencode') {
+    return Boolean(resolveOpenCodeCommand())
+  }
+
+  return Boolean(resolveCommandPath(command))
 }
 
 function spawnCliProcess(command, args, options = {}) {
-  const useShell = process.platform === 'win32'
+  const extension = path.extname(command).toLowerCase()
+  const useShell = process.platform === 'win32' && (extension.length === 0 || extension === '.cmd' || extension === '.bat')
   return spawn(command, args, {
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
@@ -69,12 +203,13 @@ function getAvailableOpenCodeInstallMethods() {
 }
 
 export async function getOpenCodeCliStatus() {
-  const installed = commandExists('opencode')
+  const opencodeCommand = resolveOpenCodeCommand()
+  const installed = Boolean(opencodeCommand)
   let version = null
 
-  if (installed) {
+  if (opencodeCommand) {
     try {
-      const { stdout } = await execAsync('opencode --version', { windowsHide: true })
+      const { stdout } = await readCommandOutput(opencodeCommand, ['--version'])
       version = stdout.trim() || null
     } catch {
       version = null
@@ -100,8 +235,13 @@ export async function installOpenCodeCli(payload) {
     throw new Error(`${method.command} is not available on this system.`)
   }
 
+  const resolvedCommand = resolveCommandPath(method.command)
+  if (!resolvedCommand) {
+    throw new Error(`${method.command} is not available on this system.`)
+  }
+
   await new Promise((resolve, reject) => {
-    const child = spawnCliProcess(method.command, method.args, {
+    const child = spawnCliProcess(resolvedCommand, method.args, {
       stdio: ['ignore', 'pipe', 'pipe'],
     })
 
@@ -567,6 +707,11 @@ async function getOpenCodeRuntime(cwd) {
     throw new Error('OpenCode CLI was not found in PATH. Install OpenCode to use ACP.')
   }
 
+  const opencodeCommand = resolveOpenCodeCommand()
+  if (!opencodeCommand) {
+    throw new Error('OpenCode CLI was not found in PATH. Install OpenCode to use ACP.')
+  }
+
   const workingDirectory = path.resolve(cwd || process.cwd())
   const existing = openCodeRuntimeByCwd.get(workingDirectory)
   if (existing) {
@@ -574,7 +719,7 @@ async function getOpenCodeRuntime(cwd) {
   }
 
   const runtimePromise = (async () => {
-    const proc = spawnCliProcess('opencode', ['acp', '--cwd', workingDirectory], {
+    const proc = spawnCliProcess(opencodeCommand, ['acp', '--cwd', workingDirectory], {
       cwd: workingDirectory,
     })
     const rpc = createJsonRpcConnection(proc)

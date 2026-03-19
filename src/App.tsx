@@ -24,16 +24,24 @@ function App() {
 
   useEffect(() => {
     async function boot() {
-      if (!window.argent?.app) {
+      let bridge = window.argent
+      if (!bridge?.app) {
+        await new Promise((resolve) => {
+          window.setTimeout(resolve, 150)
+        })
+        bridge = window.argent
+      }
+
+      if (!bridge?.app) {
         setBridgeReady(false)
         setLoaded(true)
         return
       }
 
       const [snapshot, providerList, homePath] = await Promise.all([
-        window.argent.app.loadState(),
-        window.argent.providers.list(),
-        window.argent.app.getHomeDirectory(),
+        bridge.app.loadState(),
+        bridge.providers.list(),
+        bridge.app.getHomeDirectory(),
       ])
       dispatch({ type: 'replace', value: snapshot as AppSnapshot })
       setProviders(providerList)

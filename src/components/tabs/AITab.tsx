@@ -551,6 +551,8 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
   const isProgrammaticScrollRef = useRef(false)
   const isActiveRef = useRef(isActive)
   const copiedResetTimerRef = useRef<number | null>(null)
+  const composerRef = useRef<HTMLTextAreaElement | null>(null)
+  const wasOpencodeInstalledRef = useRef(false)
 
   useEffect(() => {
     tabRef.current = tab
@@ -626,6 +628,16 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
     () => extractModelMeta('OpenCode/loading', 'opencode/loading', 'opencode').providerKey,
     [],
   )
+
+  useEffect(() => {
+    if (opencodeInstalled && !wasOpencodeInstalledRef.current && isActiveRef.current) {
+      window.requestAnimationFrame(() => {
+        composerRef.current?.focus()
+      })
+    }
+
+    wasOpencodeInstalledRef.current = opencodeInstalled
+  }, [opencodeInstalled])
 
   const selectedModelLabel = useMemo(() => {
     const selectedOption = modelOptions.find((item) => item.id === selectedModelValue)
@@ -919,6 +931,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
         const status = await window.argent.ai.installCli({ methodId })
         sharedOpenCodeCliStatus = status
         setOpencodeCliStatus(status)
+        await refreshOpenCodeCliStatus(true)
         setOpencodeInstallMessage(
           status.installed
             ? `OpenCode CLI installed${status.version ? ` (${status.version})` : ''}.`
@@ -930,7 +943,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
         setInstallingOpenCodeMethodId(null)
       }
     },
-    [],
+    [refreshOpenCodeCliStatus],
   )
 
   useEffect(() => {
@@ -2185,7 +2198,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
         ) : !opencodeInstalled ? (
           <div className="flex h-full min-h-[380px] flex-1 items-center justify-center">
             <div className="w-full max-w-[620px] text-center">
-              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-white/5 text-[#d8d8d8] ring-1 ring-white/10">
+              <div className="mx-auto flex h-14 w-14 items-center justify-center text-[#d8d8d8]">
                 <ProviderGlyph providerKey={openCodeProviderKey} className="h-7 w-7 text-[#d8d8d8]" />
               </div>
               <h2 className="mb-0 mt-5 text-[28px] font-semibold tracking-tight text-white">Install OpenCode</h2>
@@ -2225,7 +2238,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
                   type="button"
                   className="ghost-btn h-10 rounded-xl border border-white/10 px-4 text-[13px] text-[#cfcfcf] hover:text-white"
                   onClick={() => {
-                    void refreshOpenCodeCliStatus()
+                    void refreshOpenCodeCliStatus(true)
                   }}
                   disabled={installingOpenCodeMethodId !== null}
                 >
@@ -2574,6 +2587,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
             ) : null}
 
             <textarea
+              ref={composerRef}
               className="w-full bg-transparent outline-none border-0 resize-none text-[15px] text-[#ebebeb] placeholder:text-[#7f7f7f] pt-2.5 pb-[6px] px-1 min-h-[72px] max-h-72 overflow-auto"
               value={tab.input}
               onChange={(event) => updateTab((current) => ({ ...current, input: event.target.value }))}

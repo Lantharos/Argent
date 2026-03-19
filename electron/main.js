@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, screen, shell } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
+import os from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import electronUpdater from 'electron-updater'
@@ -42,6 +43,21 @@ const activeAIStreams = new Map()
 const DEFAULT_WINDOW_WIDTH = 1400
 const DEFAULT_WINDOW_HEIGHT = 900
 const AUTO_UPDATE_INTERVAL_MS = 6 * 60 * 60 * 1000
+
+function getWindowsBuildNumber() {
+  if (process.platform !== 'win32') {
+    return null
+  }
+
+  const rawBuild = os.release().split('.').at(-1) || ''
+  const parsedBuild = Number.parseInt(rawBuild, 10)
+  return Number.isFinite(parsedBuild) ? parsedBuild : null
+}
+
+function isWindows10() {
+  const buildNumber = getWindowsBuildNumber()
+  return process.platform === 'win32' && (buildNumber === null || buildNumber < 22000)
+}
 
 function checkForUpdates() {
   return autoUpdater.checkForUpdatesAndNotify().catch(error => {
@@ -94,6 +110,7 @@ function setupAutoUpdater() {
 function createMainWindow() {
   const isWindows = process.platform === 'win32'
   const isMac = process.platform === 'darwin'
+  const useLegacyWindowsVisuals = isWindows10()
   const primaryDisplay = screen.getPrimaryDisplay()
   const { width: availableWidth, height: availableHeight } = primaryDisplay.workAreaSize
   const shouldStartMaximized =
@@ -104,7 +121,7 @@ function createMainWindow() {
     height: DEFAULT_WINDOW_HEIGHT,
     minWidth: 900,
     minHeight: 600,
-    backgroundColor: '#00000000',
+    backgroundColor: useLegacyWindowsVisuals ? '#0b0b0b' : '#00000000',
     titleBarStyle: 'hidden',
     titleBarOverlay: isWindows
       ? {
@@ -115,7 +132,7 @@ function createMainWindow() {
       : false,
     vibrancy: isMac ? 'under-window' : undefined,
     visualEffectState: isMac ? 'active' : undefined,
-    roundedCorners: true,
+    roundedCorners: !useLegacyWindowsVisuals,
     icon: isMac ? undefined : windowIconPath,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -128,9 +145,9 @@ function createMainWindow() {
     },
   })
 
-  win.setBackgroundColor('#00000000')
-  if (isWindows) {
-    win.setBackgroundMaterial('acrylic')
+  win.setBackgroundColor(useLegacyWindowsVisuals ? '#0b0b0b' : '#00000000')
+  if (isWindows && typeof win.setBackgroundMaterial === 'function') {
+    win.setBackgroundMaterial(useLegacyWindowsVisuals ? 'none' : 'acrylic')
   }
   if (shouldStartMaximized) {
     win.maximize()

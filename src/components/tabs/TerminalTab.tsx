@@ -44,6 +44,7 @@ function sanitizeReplayChunk(value: string): string {
 }
 
 export function TerminalTab({ tab, isActive, onChange }: Props) {
+  const system = window.argent.system
   const containerRef = useRef<HTMLDivElement | null>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
@@ -56,6 +57,8 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
   const onChangeRef = useRef(onChange)
   const pendingHistoryRef = useRef('')
   const historyFlushTimerRef = useRef<number | null>(null)
+  const resizeFrameRef = useRef<number | null>(null)
+  const lastSizeRef = useRef<{ cols: number; rows: number } | null>(null)
 
   const safeFit = useCallback(() => {
     const terminal = termRef.current
@@ -71,6 +74,42 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
       return false
     }
   }, [])
+
+  const syncTerminalSize = useCallback(() => {
+    const terminal = termRef.current
+    if (!terminal || !safeFit()) {
+      return false
+    }
+
+    const nextSize = { cols: terminal.cols, rows: terminal.rows }
+    if (nextSize.cols <= 0 || nextSize.rows <= 0) {
+      return false
+    }
+
+    const previousSize = lastSizeRef.current
+    if (previousSize && previousSize.cols === nextSize.cols && previousSize.rows === nextSize.rows) {
+      return true
+    }
+
+    lastSizeRef.current = nextSize
+    const sessionId = sessionIdRef.current
+    if (sessionId) {
+      void window.argent.terminal.resize(sessionId, nextSize.cols, nextSize.rows)
+    }
+
+    return true
+  }, [safeFit])
+
+  const scheduleTerminalResize = useCallback(() => {
+    if (resizeFrameRef.current !== null) {
+      return
+    }
+
+    resizeFrameRef.current = window.requestAnimationFrame(() => {
+      resizeFrameRef.current = null
+      void syncTerminalSize()
+    })
+  }, [syncTerminalSize])
 
   const flushHistory = useCallback(() => {
     if (!pendingHistoryRef.current) {
@@ -112,13 +151,21 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
   useEffect(() => {
     const terminal = new Terminal({
       cursorBlink: true,
+      allowTransparency: !system.isWindows10,
       theme: {
-        background: '#00000000',
+        background: system.isWindows10 ? '#0b0b0b' : '#00000000',
         foreground: '#d7dce4',
       },
       fontFamily: 'JetBrains Mono, monospace',
       fontSize: 15,
       lineHeight: 1.3,
+      windowsPty:
+        system.platform === 'win32'
+          ? {
+              backend: system.terminalBackend,
+              buildNumber: system.windowsBuildNumber ?? undefined,
+            }
+          : undefined,
     })
 
     const fitAddon = new FitAddon()
@@ -126,21 +173,14 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
 
     if (containerRef.current) {
       terminal.open(containerRef.current)
-      safeFit()
+      scheduleTerminalResize()
     }
 
     termRef.current = terminal
     fitRef.current = fitAddon
 
     const resizeObserver = new ResizeObserver(() => {
-      if (!safeFit()) {
-        return
-      }
-
-      const sessionId = sessionIdRef.current
-      if (sessionId) {
-        void window.argent.terminal.resize(sessionId, terminal.cols, terminal.rows)
-      }
+      scheduleTerminalResize()
     })
 
     if (containerRef.current) {
@@ -158,6 +198,10 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
         window.clearTimeout(historyFlushTimerRef.current)
         historyFlushTimerRef.current = null
       }
+      if (resizeFrameRef.current !== null) {
+        window.cancelAnimationFrame(resizeFrameRef.current)
+        resizeFrameRef.current = null
+      }
       flushHistory()
       inputDisposeRef.current?.dispose()
       inputDisposeRef.current = null
@@ -165,7 +209,7 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
       termRef.current = null
       terminal.dispose()
     }
-  }, [flushHistory, safeFit])
+  }, [flushHistory, scheduleTerminalResize, system.isWindows10, system.platform, system.terminalBackend, system.windowsBuildNumber])
 
   useEffect(() => {
     if (creatingSessionRef.current) {
@@ -188,6 +232,7 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
 
         const created = await window.argent.terminal.create(tab.cwd)
         sessionReplayModeRef.current[created.id] = 'new'
+        lastSizeRef.current = null
         if (!cancelled) {
           onChangeRef.current({ ...latestTabRef.current, sessionId: created.id })
         }
@@ -211,6 +256,7 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
       return
     }
     attachedSessionIdRef.current = sessionId
+    lastSizeRef.current = null
 
     const replayMode = sessionReplayModeRef.current[sessionId] ?? 'reuse'
 
@@ -271,14 +317,7 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
     }
 
     fitTimer = window.setTimeout(() => {
-      if (!safeFit()) {
-        return
-      }
-
-      const current = termRef.current
-      if (current) {
-        void window.argent.terminal.resize(sessionId, current.cols, current.rows)
-      }
+      scheduleTerminalResize()
     }, 50)
 
     return () => {
@@ -297,7 +336,7 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
         attachedSessionIdRef.current = null
       }
     }
-  }, [flushHistory, queueHistory, safeFit, tab.sessionId])
+  }, [flushHistory, queueHistory, scheduleTerminalResize, tab.sessionId])
 
   useEffect(() => {
     if (!isActive) {
@@ -305,22 +344,14 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
     }
 
     const timerId = window.setTimeout(() => {
-      if (!safeFit()) {
-        return
-      }
-
-      const sessionId = sessionIdRef.current
-      const current = termRef.current
-      if (sessionId && current) {
-        void window.argent.terminal.resize(sessionId, current.cols, current.rows)
-      }
+      scheduleTerminalResize()
       termRef.current?.focus()
     }, 30)
 
     return () => {
       window.clearTimeout(timerId)
     }
-  }, [isActive, safeFit])
+  }, [isActive, scheduleTerminalResize])
 
   return (
     <section className="tab-pane terminal-tab">

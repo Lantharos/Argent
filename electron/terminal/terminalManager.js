@@ -1,6 +1,22 @@
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
+import os from 'node:os'
 import { spawn as spawnPty } from 'node-pty'
+
+function getWindowsBuildNumber() {
+  if (process.platform !== 'win32') {
+    return null
+  }
+
+  const rawBuild = os.release().split('.').at(-1) || ''
+  const parsedBuild = Number.parseInt(rawBuild, 10)
+  return Number.isFinite(parsedBuild) ? parsedBuild : null
+}
+
+function shouldUseWinpty() {
+  const buildNumber = getWindowsBuildNumber()
+  return process.platform === 'win32' && (buildNumber === null || buildNumber < 22000)
+}
 
 function getShell() {
   if (process.platform === 'win32') {
@@ -34,6 +50,7 @@ export class TerminalManager {
       cwd: resolvedCwd,
       env: process.env,
       handleFlowControl: false,
+      useConpty: process.platform === 'win32' ? !shouldUseWinpty() : undefined,
     })
 
     terminal.onData((data) => {

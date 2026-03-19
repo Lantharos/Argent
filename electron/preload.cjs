@@ -1,12 +1,44 @@
 const { contextBridge, ipcRenderer } = require('electron')
 
+function getSystemInfo() {
+  try {
+    const os = require('node:os')
+    const platform = process.platform
+    const release = typeof os.release === 'function' ? os.release() : ''
+    const releaseParts = String(release).split('.')
+    const rawBuild = releaseParts.length > 0 ? releaseParts[releaseParts.length - 1] : ''
+    const parsedBuild = platform === 'win32' ? Number.parseInt(rawBuild || '', 10) : null
+    const windowsBuildNumber = Number.isFinite(parsedBuild) ? parsedBuild : null
+    const isWindows10 = platform === 'win32' && (windowsBuildNumber === null || windowsBuildNumber < 22000)
+
+    return {
+      platform,
+      release,
+      isWindows10,
+      terminalBackend: platform === 'win32' && isWindows10 ? 'winpty' : 'conpty',
+      windowsBuildNumber,
+    }
+  } catch {
+    return {
+      platform: process.platform,
+      release: '',
+      isWindows10: false,
+      terminalBackend: process.platform === 'win32' ? 'conpty' : 'conpty',
+      windowsBuildNumber: null,
+    }
+  }
+}
+
 function on(channel, callback) {
   const handler = (_, payload) => callback(payload)
   ipcRenderer.on(channel, handler)
   return () => ipcRenderer.removeListener(channel, handler)
 }
 
+const systemInfo = getSystemInfo()
+
 contextBridge.exposeInMainWorld('argent', {
+  system: systemInfo,
   git: {
     checkInstalled: () => ipcRenderer.invoke('git:check-installed'),
     exec: (opts) => ipcRenderer.invoke('git:exec', opts),

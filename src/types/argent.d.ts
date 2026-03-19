@@ -179,6 +179,13 @@ export type AppSnapshot = {
 declare global {
   interface Window {
     argent: {
+      system: {
+        platform: string
+        release: string
+        isWindows10: boolean
+        terminalBackend: 'conpty' | 'winpty'
+        windowsBuildNumber: number | null
+      }
       git: {
         checkInstalled: () => Promise<{ installed: boolean, version?: string, error?: string }>
         exec: (opts: { cwd: string, args: string[] }) => Promise<{ success: boolean, stdout?: string, stderr?: string, error?: string }>

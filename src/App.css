@@ -101,7 +101,7 @@
   .primary-btn,
   .chip-btn,
   .ghost-btn {
-    @apply rounded-lg text-xs transition-colors cursor-pointer flex items-center justify-center;
+    @apply rounded-lg text-xs transition-colors cursor-pointer flex items-center justify-center gap-2;
   }
 
   .primary-btn {
