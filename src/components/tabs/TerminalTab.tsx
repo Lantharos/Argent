@@ -13,6 +13,69 @@ type Props = {
 const TERMINAL_HISTORY_LIMIT = 300_000
 const HISTORY_FLUSH_MS = 120
 const BACKSPACE_CHAR = String.fromCharCode(8)
+const DEFAULT_TERMINAL_TAB_TITLE = 'Terminal'
+const WINDOWS_PATH_SEPARATOR = /[\\/]/u
+
+function formatTerminalExecutableTitle(value: string): string | null {
+  const trimmed = value.trim()
+  if (!trimmed) {
+    return null
+  }
+
+  const normalized = trimmed.replace(/["']/g, '')
+  const lastSegment = normalized.split(WINDOWS_PATH_SEPARATOR).filter(Boolean).at(-1) || normalized
+  const withoutExtension = lastSegment.replace(/\.(exe|cmd|bat)$/i, '')
+  const lowerName = withoutExtension.toLowerCase()
+
+  if (lowerName === 'powershell') {
+    return 'PowerShell'
+  }
+  if (lowerName === 'pwsh') {
+    return 'PowerShell'
+  }
+  if (lowerName === 'cmd') {
+    return 'Command Prompt'
+  }
+  if (lowerName === 'bash') {
+    return 'Bash'
+  }
+  if (lowerName === 'zsh') {
+    return 'Zsh'
+  }
+  if (lowerName === 'fish') {
+    return 'Fish'
+  }
+  if (lowerName === 'nu') {
+    return 'Nu'
+  }
+
+  if (WINDOWS_PATH_SEPARATOR.test(normalized) || /\.(exe|cmd|bat)$/i.test(normalized)) {
+    return withoutExtension ? withoutExtension[0].toUpperCase() + withoutExtension.slice(1) : null
+  }
+
+  return null
+}
+
+function sanitizeTerminalTitle(value: string): string {
+  const executableTitle = formatTerminalExecutableTitle(value)
+  if (executableTitle) {
+    return executableTitle
+  }
+
+  const normalized = Array.from(value)
+    .filter((char) => {
+      const code = char.charCodeAt(0)
+      return (code >= 32 && code !== 127) || code > 159
+    })
+    .join('')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!normalized) {
+    return DEFAULT_TERMINAL_TAB_TITLE
+  }
+
+  return normalized.length > 80 ? `${normalized.slice(0, 80).trimEnd()}...` : normalized
+}
 
 function trimTrailingPowerShellPrompt(value: string): string {
   return value.replace(/(?:\r?\n)?PS [^\r\n>]+>\s*$/m, '')
@@ -45,6 +108,12 @@ function sanitizeReplayChunk(value: string): string {
 
 export function TerminalTab({ tab, isActive, onChange }: Props) {
   const system = window.argent.system
+  const useOpaqueTerminalSurface = system.platform === 'win32'
+  const preferredLineHeight = system.platform === 'win32' ? 1.1 : 1.2
+  const preferredFontFamily =
+    system.platform === 'win32'
+      ? '"Cascadia Mono", "Cascadia Code", Consolas, "JetBrains Mono", monospace'
+      : '"JetBrains Mono", monospace'
   const containerRef = useRef<HTMLDivElement | null>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
@@ -59,6 +128,34 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
   const historyFlushTimerRef = useRef<number | null>(null)
   const resizeFrameRef = useRef<number | null>(null)
   const lastSizeRef = useRef<{ cols: number; rows: number } | null>(null)
+  const lastReportedTitleRef = useRef(sanitizeTerminalTitle(tab.title || DEFAULT_TERMINAL_TAB_TITLE))
+  const webglAddonRef = useRef<{ dispose: () => void; clearTextureAtlas?: () => void } | null>(null)
+  const webglContextLossDisposeRef = useRef<{ dispose: () => void } | null>(null)
+
+  const alignTerminalViewport = useCallback(() => {
+    const container = containerRef.current
+    if (!container) {
+      return false
+    }
+
+    const bounds = container.getBoundingClientRect()
+    const nextWidth = Math.max(0, Math.floor(bounds.width))
+    const nextHeight = Math.max(0, Math.floor(bounds.height))
+    if (nextWidth === 0 || nextHeight === 0) {
+      return false
+    }
+
+    const widthStyle = `${nextWidth}px`
+    const heightStyle = `${nextHeight}px`
+    if (container.style.width !== widthStyle) {
+      container.style.width = widthStyle
+    }
+    if (container.style.height !== heightStyle) {
+      container.style.height = heightStyle
+    }
+
+    return true
+  }, [])
 
   const safeFit = useCallback(() => {
     const terminal = termRef.current
@@ -68,12 +165,15 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
     }
 
     try {
+      if (!alignTerminalViewport()) {
+        return false
+      }
       fitAddon.fit()
       return true
     } catch {
       return false
     }
-  }, [])
+  }, [alignTerminalViewport])
 
   const syncTerminalSize = useCallback(() => {
     const terminal = termRef.current
@@ -146,19 +246,22 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
     latestTabRef.current = tab
     onChangeRef.current = onChange
     sessionIdRef.current = tab.sessionId ?? null
+    lastReportedTitleRef.current = sanitizeTerminalTitle(tab.title || DEFAULT_TERMINAL_TAB_TITLE)
   }, [onChange, tab])
 
   useEffect(() => {
     const terminal = new Terminal({
       cursorBlink: true,
-      allowTransparency: !system.isWindows10,
+      allowTransparency: !useOpaqueTerminalSurface,
       theme: {
-        background: system.isWindows10 ? '#0b0b0b' : '#00000000',
+        background: useOpaqueTerminalSurface ? '#0b0b0b' : '#00000000',
         foreground: '#d7dce4',
       },
-      fontFamily: 'JetBrains Mono, monospace',
+      fontFamily: preferredFontFamily,
       fontSize: 15,
-      lineHeight: 1.3,
+      lineHeight: preferredLineHeight,
+      letterSpacing: 0,
+      customGlyphs: true,
       windowsPty:
         system.platform === 'win32'
           ? {
@@ -172,12 +275,26 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
     terminal.loadAddon(fitAddon)
 
     if (containerRef.current) {
+      alignTerminalViewport()
       terminal.open(containerRef.current)
       scheduleTerminalResize()
     }
 
     termRef.current = terminal
     fitRef.current = fitAddon
+
+    const titleDispose = terminal.onTitleChange((nextTitle) => {
+      const sanitizedTitle = sanitizeTerminalTitle(nextTitle)
+      if (sanitizedTitle === lastReportedTitleRef.current) {
+        return
+      }
+
+      lastReportedTitleRef.current = sanitizedTitle
+      onChangeRef.current({
+        ...latestTabRef.current,
+        title: sanitizedTitle,
+      })
+    })
 
     const resizeObserver = new ResizeObserver(() => {
       scheduleTerminalResize()
@@ -187,7 +304,32 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
       resizeObserver.observe(containerRef.current)
     }
 
+    let cancelled = false
+    if (system.platform === 'win32') {
+      void import('xterm-addon-webgl')
+        .then(({ WebglAddon }) => {
+          if (cancelled || !termRef.current) {
+            return
+          }
+
+          const addon = new WebglAddon()
+          webglAddonRef.current = addon
+          terminal.loadAddon(addon)
+          webglContextLossDisposeRef.current = addon.onContextLoss(() => {
+            webglContextLossDisposeRef.current?.dispose()
+            webglContextLossDisposeRef.current = null
+            webglAddonRef.current?.dispose()
+            webglAddonRef.current = null
+          })
+          scheduleTerminalResize()
+        })
+        .catch(() => {
+          webglAddonRef.current = null
+        })
+    }
+
     return () => {
+      cancelled = true
       const sessionId = sessionIdRef.current
       if (sessionId) {
         void window.argent.terminal.kill(sessionId)
@@ -205,11 +347,26 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
       flushHistory()
       inputDisposeRef.current?.dispose()
       inputDisposeRef.current = null
+      webglContextLossDisposeRef.current?.dispose()
+      webglContextLossDisposeRef.current = null
+      webglAddonRef.current?.dispose()
+      webglAddonRef.current = null
+      titleDispose.dispose()
       fitRef.current = null
       termRef.current = null
       terminal.dispose()
     }
-  }, [flushHistory, scheduleTerminalResize, system.isWindows10, system.platform, system.terminalBackend, system.windowsBuildNumber])
+  }, [
+    alignTerminalViewport,
+    flushHistory,
+    preferredLineHeight,
+    preferredFontFamily,
+    scheduleTerminalResize,
+    system.platform,
+    system.terminalBackend,
+    system.windowsBuildNumber,
+    useOpaqueTerminalSurface,
+  ])
 
   useEffect(() => {
     if (creatingSessionRef.current) {
@@ -317,6 +474,7 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
     }
 
     fitTimer = window.setTimeout(() => {
+      webglAddonRef.current?.clearTextureAtlas?.()
       scheduleTerminalResize()
     }, 50)
 
@@ -355,7 +513,10 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
 
   return (
     <section className="tab-pane terminal-tab">
-      <div className="terminal-frame glass-panel p-3">
+      <div
+        className="terminal-frame p-3"
+        style={useOpaqueTerminalSurface ? { backgroundColor: '#0b0b0b' } : undefined}
+      >
         <div ref={containerRef} className="h-full w-full" />
       </div>
     </section>

@@ -121,6 +121,20 @@
     @apply py-2;
   }
 
+  .terminal-tab .terminal-frame {
+    background: #0b0b0b;
+  }
+
+  .terminal-tab .terminal-frame .xterm,
+  .terminal-tab .terminal-frame .xterm-screen,
+  .terminal-tab .terminal-frame .xterm-viewport {
+    background: #0b0b0b !important;
+  }
+
+  .terminal-tab .terminal-frame .xterm-screen canvas {
+    transform: translateZ(0);
+  }
+
   .ai-tab .pane-head {
     @apply border-b border-white/10;
   }

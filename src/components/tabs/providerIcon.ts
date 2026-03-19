@@ -48,7 +48,7 @@ const providerMatchEntries: ProviderMatchEntry[] = (toc as IconTocEntry[])
   })
   .filter((entry) => entry.idNorm.length > 0)
 
-function normalizeProviderKey(raw: string | null | undefined) {
+export function normalizeProviderKey(raw: string | null | undefined) {
   if (!raw) return null
 
   const normalized = normalizeMatchText(raw)

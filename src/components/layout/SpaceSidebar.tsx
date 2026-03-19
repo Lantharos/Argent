@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Ellipsis, Loader2 } from 'lucide-react'
 import type { AppSpace, AppTab, AppTabGroup, AppTabSplitNode, AppTabType } from '../../types/argent'
+import { normalizeProviderKey, ProviderGlyph } from '../tabs/providerIcon'
 
 type Props = {
   spaces: AppSpace[]
@@ -121,6 +122,27 @@ function getIcon(type: AppTabType) {
   }
 }
 
+function getTerminalProviderKey(title: string) {
+  const providerKey = normalizeProviderKey(title)
+  if (!providerKey) {
+    return null
+  }
+
+  const normalizedTitle = title.toLowerCase()
+  if (
+    normalizedTitle.includes('terminal') ||
+    normalizedTitle.includes('powershell') ||
+    normalizedTitle.includes('command prompt') ||
+    normalizedTitle.includes('bash') ||
+    normalizedTitle.includes('zsh') ||
+    normalizedTitle.includes('fish')
+  ) {
+    return null
+  }
+
+  return providerKey
+}
+
 function renderTabIcon(tab: AppTab) {
   if (tab.type === 'ai') {
     const icon = (
@@ -144,6 +166,13 @@ function renderTabIcon(tab: AppTab) {
 
   if (tab.type === 'browser' && tab.faviconUrl) {
     return <img className="w-[16px] h-[16px] rounded-[4px] shrink-0" src={tab.faviconUrl} alt="" />
+  }
+
+  if (tab.type === 'terminal') {
+    const providerKey = getTerminalProviderKey(tab.title)
+    if (providerKey) {
+      return <ProviderGlyph providerKey={providerKey} className="h-[16px] w-[16px] shrink-0 text-[#969696]" />
+    }
   }
 
   return getIcon(tab.type)
