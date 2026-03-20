@@ -22,34 +22,91 @@ type FileNode = {
   path: string
 }
 
+type ContextMenuNode = FileNode & {
+  isWorkspaceRoot?: boolean
+}
+
 type FileTreeItemProps = {
   node: FileNode
   currentFilePath?: string | null
   onSelect: (node: FileNode) => void
   onSelectInNewTab: (node: FileNode) => void
-  onContextMenu: (e: React.MouseEvent, node: FileNode, rect?: DOMRect) => void
+  onContextMenu: (e: React.MouseEvent, node: ContextMenuNode, rect?: DOMRect) => void
   onDropNode: (sourcePath: string, destNode: FileNode) => Promise<void>
+  pendingCreate: PendingCreateState | null
+  creatingItem: boolean
+  onPendingCreateChange: (value: string) => void
+  onPendingCreateSubmit: () => void
+  onPendingCreateCancel: () => void
   clipboard: { path: string, type: 'copy' | 'cut' } | null
   refreshCount: number
 }
 
-function FileTreeItem({ node, currentFilePath, onSelect, onSelectInNewTab, onContextMenu, onDropNode, clipboard, refreshCount }: FileTreeItemProps) {
+type PendingCreateState = {
+  parentPath: string
+  kind: 'file' | 'folder'
+  value: string
+}
+
+function getParentPath(filePath: string) {
+  const segments = filePath.split(/[/\\]/)
+  if (segments.length <= 1) {
+    return ''
+  }
+  return segments.slice(0, -1).join('/')
+}
+
+function joinTreePath(dirPath: string, name: string) {
+  return dirPath.replace(/[\\/]+$/, '') + '/' + name
+}
+
+function isTreeItemTarget(target: EventTarget | null) {
+  return target instanceof Element && Boolean(target.closest('[data-argent-tree-item="true"]'))
+}
+
+function getContextMenuHeight(node: ContextMenuNode) {
+  if (node.isWorkspaceRoot) {
+    return 120
+  }
+  if (node.isDirectory) {
+    return 228
+  }
+  return 160
+}
+
+function FileTreeItem({
+  node,
+  currentFilePath,
+  onSelect,
+  onSelectInNewTab,
+  onContextMenu,
+  onDropNode,
+  pendingCreate,
+  creatingItem,
+  onPendingCreateChange,
+  onPendingCreateSubmit,
+  onPendingCreateCancel,
+  clipboard,
+  refreshCount,
+}: FileTreeItemProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [children, setChildren] = useState<FileNode[]>([])
+  const shouldShowPendingCreate = pendingCreate?.parentPath === node.path && node.isDirectory
+  const isExpanded = isOpen || shouldShowPendingCreate
 
   useEffect(() => {
-    if (isOpen && node.isDirectory) {
+    if (isExpanded && node.isDirectory) {
       window.argent.fs.readDir(node.path).then(setChildren)
     }
-  }, [children.length, isOpen, node.isDirectory, node.path, refreshCount])
+  }, [children.length, isExpanded, node.isDirectory, node.path, refreshCount])
 
   const toggle = async (event: React.MouseEvent<HTMLDivElement>) => {
     if (node.isDirectory) {
-      if (!isOpen && children.length === 0) {
+      if (!isExpanded && children.length === 0) {
         const kids = await window.argent.fs.readDir(node.path)
         setChildren(kids)
       }
-      setIsOpen(!isOpen)
+      setIsOpen(!isExpanded)
       return
     }
 
@@ -68,6 +125,7 @@ function FileTreeItem({ node, currentFilePath, onSelect, onSelectInNewTab, onCon
   return (
     <div className="select-none">
       <div
+        data-argent-tree-item="true"
         draggable
         onMouseDown={(event) => {
           if (event.button === 1 && !node.isDirectory) {
@@ -112,18 +170,18 @@ function FileTreeItem({ node, currentFilePath, onSelect, onSelectInNewTab, onCon
         } ${isCut ? 'opacity-40' : ''}`}
       >
         <span className={`flex w-4 justify-center opacity-60 ${isIgnored ? 'text-[#444]' : 'text-[#888]'}`}>
-          {node.isDirectory ? (isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />) : null}
+          {node.isDirectory ? (isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />) : null}
         </span>
         <span className={`flex justify-center ${isIgnored ? 'text-[#555]' : 'text-[#888]'}`}>
           {node.isDirectory ? (
-            isOpen ? <FolderOpen size={14} /> : <Folder size={14} />
+            isExpanded ? <FolderOpen size={14} /> : <Folder size={14} />
           ) : (
             <File size={13} className={isIgnored ? 'text-[#555]' : 'text-[#888]'} />
           )}
         </span>
         <span className="truncate">{node.name}</span>
       </div>
-      {isOpen && node.isDirectory && children.length > 0 ? (
+      {isExpanded && node.isDirectory && children.length > 0 ? (
         <div className="ml-[10px] mt-0.5 border-l border-white/5 pl-[10px]">
           {children.map((child) => (
             <FileTreeItem
@@ -134,10 +192,77 @@ function FileTreeItem({ node, currentFilePath, onSelect, onSelectInNewTab, onCon
               onSelectInNewTab={onSelectInNewTab}
               onContextMenu={onContextMenu}
               onDropNode={onDropNode}
+              pendingCreate={pendingCreate}
+              creatingItem={creatingItem}
+              onPendingCreateChange={onPendingCreateChange}
+              onPendingCreateSubmit={onPendingCreateSubmit}
+              onPendingCreateCancel={onPendingCreateCancel}
               clipboard={clipboard}
               refreshCount={refreshCount}
             />
           ))}
+          {shouldShowPendingCreate ? (
+            <div className="mt-1 ml-1 flex items-center gap-1.5 rounded px-1.5 py-1 text-sm text-[#d4d4d4]">
+              <span className="flex w-4 justify-center opacity-60 text-[#888]" />
+              <span className="flex justify-center text-[#888]">
+                {pendingCreate.kind === 'folder' ? <Folder size={14} /> : <File size={13} />}
+              </span>
+              <input
+                autoFocus
+                value={pendingCreate.value}
+                className="min-w-0 flex-1 bg-transparent text-sm text-[#ececec] outline-none"
+                placeholder={pendingCreate.kind === 'folder' ? 'folder-name' : 'file-name.ts'}
+                onChange={(event) => onPendingCreateChange(event.target.value)}
+                onBlur={() => {
+                  if (!creatingItem) {
+                    onPendingCreateCancel()
+                  }
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    onPendingCreateSubmit()
+                  }
+                  if (event.key === 'Escape') {
+                    event.preventDefault()
+                    onPendingCreateCancel()
+                  }
+                }}
+              />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      {isExpanded && node.isDirectory && children.length === 0 && shouldShowPendingCreate ? (
+        <div className="ml-[10px] mt-0.5 border-l border-white/5 pl-[10px]">
+          <div className="mt-1 ml-1 flex items-center gap-1.5 rounded px-1.5 py-1 text-sm text-[#d4d4d4]">
+            <span className="flex w-4 justify-center opacity-60 text-[#888]" />
+            <span className="flex justify-center text-[#888]">
+              {pendingCreate.kind === 'folder' ? <Folder size={14} /> : <File size={13} />}
+            </span>
+            <input
+              autoFocus
+              value={pendingCreate.value}
+              className="min-w-0 flex-1 bg-transparent text-sm text-[#ececec] outline-none"
+              placeholder={pendingCreate.kind === 'folder' ? 'folder-name' : 'file-name.ts'}
+              onChange={(event) => onPendingCreateChange(event.target.value)}
+              onBlur={() => {
+                if (!creatingItem) {
+                  onPendingCreateCancel()
+                }
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  onPendingCreateSubmit()
+                }
+                if (event.key === 'Escape') {
+                  event.preventDefault()
+                  onPendingCreateCancel()
+                }
+              }}
+            />
+          </div>
         </div>
       ) : null}
     </div>
@@ -165,8 +290,10 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
   const [workspaceInfo, setWorkspaceInfo] = useState<WorkspaceFeatureInfo | null>(null)
   const [serverStatus, setServerStatus] = useState<LspServerState | null>(null)
   const [externalChangeNotice, setExternalChangeNotice] = useState<string | null>(null)
-  const [menu, setMenu] = useState<{ x: number, y: number, node: FileNode | null } | null>(null)
+  const [menu, setMenu] = useState<{ x: number, y: number, node: ContextMenuNode | null } | null>(null)
   const [clipboard, setClipboard] = useState<{ path: string, type: 'copy' | 'cut' } | null>(null)
+  const [pendingCreate, setPendingCreate] = useState<PendingCreateState | null>(null)
+  const [creatingItem, setCreatingItem] = useState(false)
   const sidebarRef = useRef<HTMLDivElement | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
   const versionRef = useRef(1)
@@ -386,9 +513,9 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
     setMenu(null)
   }
 
-  function handleContextMenu(event: React.MouseEvent, node: FileNode, rect?: DOMRect) {
+  function handleContextMenu(event: React.MouseEvent, node: ContextMenuNode, rect?: DOMRect) {
     const menuWidth = 192
-    const menuHeight = 160
+    const menuHeight = getContextMenuHeight(node)
     const menuGap = 4
     const sidebarRect = sidebarRef.current?.getBoundingClientRect()
 
@@ -570,9 +697,9 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
   }
 
   async function handleDropNode(sourcePath: string, destNode: FileNode) {
-    const destDir = destNode.isDirectory ? destNode.path : (destNode.path.split(/[/\\]/).slice(0, -1).join('/') || cwd)
+    const destDir = destNode.isDirectory ? destNode.path : (getParentPath(destNode.path) || cwd)
     const fileName = sourcePath.split(/[/\\]/).pop() ?? ''
-    const dest = `${destDir}/${fileName}`
+    const dest = joinTreePath(destDir, fileName)
     if (sourcePath !== dest) {
       await window.argent.fs.move(sourcePath, dest)
       setRefreshCount((count) => count + 1)
@@ -584,9 +711,9 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
       return
     }
 
-    const destDir = targetNode?.isDirectory ? targetNode.path : (targetNode?.path.split(/[/\\]/).slice(0, -1).join('/') || cwd)
+    const destDir = targetNode?.isDirectory ? targetNode.path : (targetNode?.path ? getParentPath(targetNode.path) : cwd)
     const fileName = clipboard.path.split(/[/\\]/).pop() ?? ''
-    const dest = `${destDir}/${fileName}`
+    const dest = joinTreePath(destDir, fileName)
     if (clipboard.type === 'cut') {
       await window.argent.fs.move(clipboard.path, dest)
       setClipboard(null)
@@ -595,6 +722,60 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
     }
     setRefreshCount((count) => count + 1)
     setMenu(null)
+  }
+
+  function beginCreate(kind: 'file' | 'folder', node: ContextMenuNode | null) {
+    const parentPath = node ? (node.isDirectory ? node.path : getParentPath(node.path) || cwd) : cwd
+    setPendingCreate({
+      parentPath,
+      kind,
+      value: '',
+    })
+    setMenu(null)
+  }
+
+  async function handlePendingCreateSubmit() {
+    if (!pendingCreate) {
+      return
+    }
+
+    const name = pendingCreate.value.trim()
+    if (!name) {
+      setPendingCreate(null)
+      return
+    }
+    if (/[\\/]/.test(name)) {
+      setExternalChangeNotice('Use a single file or folder name.')
+      return
+    }
+
+    setCreatingItem(true)
+    const targetPath = joinTreePath(pendingCreate.parentPath, name)
+    const success = pendingCreate.kind === 'folder'
+      ? await window.argent.fs.createDir(targetPath)
+      : await window.argent.fs.createFile(targetPath)
+    setCreatingItem(false)
+
+    if (!success) {
+      setExternalChangeNotice(`Could not create ${pendingCreate.kind}.`)
+      return
+    }
+
+    setRefreshCount((count) => count + 1)
+    setPendingCreate(null)
+    setExternalChangeNotice(null)
+
+    if (pendingCreate.kind === 'file') {
+      const content = await window.argent.fs.readFile(targetPath)
+      onChange({
+        ...tabRef.current,
+        filePath: targetPath,
+        title: name,
+        content,
+        dirty: false,
+        language: detectLanguageFromPath(targetPath).id,
+      })
+    }
   }
 
   function setSidebarOpen(open: boolean) {
@@ -653,8 +834,8 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
             closeMenuIfOutside(event.target)
           }}
           onContextMenu={(event) => {
-            if (event.target === event.currentTarget) {
-              handleContextMenu(event, { name: '', path: cwd, isDirectory: true })
+            if (!isTreeItemTarget(event.target)) {
+              handleContextMenu(event, { name: '', path: cwd, isDirectory: true, isWorkspaceRoot: true })
             }
           }}
         >
@@ -668,10 +849,51 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
                 onSelectInNewTab={handleSelectFileInNewTab}
                 onContextMenu={handleContextMenu}
                 onDropNode={handleDropNode}
+                pendingCreate={pendingCreate}
+                creatingItem={creatingItem}
+                onPendingCreateChange={(value) => {
+                  setPendingCreate((current) => (current ? { ...current, value } : current))
+                }}
+                onPendingCreateSubmit={() => {
+                  void handlePendingCreateSubmit()
+                }}
+                onPendingCreateCancel={() => setPendingCreate(null)}
                 clipboard={clipboard}
                 refreshCount={refreshCount}
               />
             ))}
+            {pendingCreate?.parentPath === cwd ? (
+              <div className="mt-1 flex items-center gap-1.5 rounded px-1.5 py-1 text-sm text-[#d4d4d4]">
+                <span className="flex w-4 justify-center opacity-60 text-[#888]" />
+                <span className="flex justify-center text-[#888]">
+                  {pendingCreate.kind === 'folder' ? <Folder size={14} /> : <File size={13} />}
+                </span>
+                <input
+                  autoFocus
+                  value={pendingCreate.value}
+                  className="min-w-0 flex-1 bg-transparent text-sm text-[#ececec] outline-none"
+                  placeholder={pendingCreate.kind === 'folder' ? 'folder-name' : 'file-name.ts'}
+                  onChange={(event) => {
+                    setPendingCreate((current) => (current ? { ...current, value: event.target.value } : current))
+                  }}
+                  onBlur={() => {
+                    if (!creatingItem) {
+                      setPendingCreate(null)
+                    }
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault()
+                      void handlePendingCreateSubmit()
+                    }
+                    if (event.key === 'Escape') {
+                      event.preventDefault()
+                      setPendingCreate(null)
+                    }
+                  }}
+                />
+              </div>
+            ) : null}
           </div>
 
           {menu ? (
@@ -680,23 +902,54 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
               className="absolute z-50 w-48 rounded-md border border-white/5 bg-[#141414]/90 py-1.5 text-[12px] text-[#a3a3a3] shadow-2xl backdrop-blur-xl"
               style={{ left: menu.x, top: menu.y }}
             >
-              <button className="w-full px-3 py-1.5 text-left transition-colors hover:bg-white/10 hover:text-[#d4d4d4]" onClick={() => setClipboard({ path: menu.node!.path, type: 'cut' })}>
-                Cut
-              </button>
-              <button className="w-full px-3 py-1.5 text-left transition-colors hover:bg-white/10 hover:text-[#d4d4d4]" onClick={() => setClipboard({ path: menu.node!.path, type: 'copy' })}>
-                Copy
-              </button>
-              <button
-                className={`w-full px-3 py-1.5 text-left transition-colors ${clipboard ? 'hover:bg-white/10 hover:text-[#d4d4d4]' : 'cursor-not-allowed text-white/20'}`}
-                onClick={() => { void handlePaste(menu.node) }}
-                disabled={!clipboard}
-              >
-                Paste
-              </button>
-              <div className="mx-auto my-1.5 h-[1px] w-[calc(100%-16px)] bg-white/5" />
-              <button className="w-full px-3 py-1.5 text-left text-red-500 transition-colors hover:bg-red-500/20 hover:text-red-400" onClick={() => { void handleDelete(menu.node!) }}>
-                Delete
-              </button>
+              {menu.node?.isWorkspaceRoot ? (
+                <>
+                  <button className="w-full px-3 py-1.5 text-left transition-colors hover:bg-white/10 hover:text-[#d4d4d4]" onClick={() => beginCreate('file', menu.node)}>
+                    New File
+                  </button>
+                  <button className="w-full px-3 py-1.5 text-left transition-colors hover:bg-white/10 hover:text-[#d4d4d4]" onClick={() => beginCreate('folder', menu.node)}>
+                    New Folder
+                  </button>
+                  <button
+                    className={`w-full px-3 py-1.5 text-left transition-colors ${clipboard ? 'hover:bg-white/10 hover:text-[#d4d4d4]' : 'cursor-not-allowed text-white/20'}`}
+                    onClick={() => { void handlePaste(menu.node) }}
+                    disabled={!clipboard}
+                  >
+                    Paste
+                  </button>
+                </>
+              ) : (
+                <>
+                  {menu.node?.isDirectory ? (
+                    <>
+                      <button className="w-full px-3 py-1.5 text-left transition-colors hover:bg-white/10 hover:text-[#d4d4d4]" onClick={() => beginCreate('file', menu.node)}>
+                        New File
+                      </button>
+                      <button className="w-full px-3 py-1.5 text-left transition-colors hover:bg-white/10 hover:text-[#d4d4d4]" onClick={() => beginCreate('folder', menu.node)}>
+                        New Folder
+                      </button>
+                      <div className="mx-auto my-1.5 h-[1px] w-[calc(100%-16px)] bg-white/5" />
+                    </>
+                  ) : null}
+                  <button className="w-full px-3 py-1.5 text-left transition-colors hover:bg-white/10 hover:text-[#d4d4d4]" onClick={() => setClipboard({ path: menu.node!.path, type: 'cut' })}>
+                    Cut
+                  </button>
+                  <button className="w-full px-3 py-1.5 text-left transition-colors hover:bg-white/10 hover:text-[#d4d4d4]" onClick={() => setClipboard({ path: menu.node!.path, type: 'copy' })}>
+                    Copy
+                  </button>
+                  <button
+                    className={`w-full px-3 py-1.5 text-left transition-colors ${clipboard ? 'hover:bg-white/10 hover:text-[#d4d4d4]' : 'cursor-not-allowed text-white/20'}`}
+                    onClick={() => { void handlePaste(menu.node) }}
+                    disabled={!clipboard}
+                  >
+                    Paste
+                  </button>
+                  <div className="mx-auto my-1.5 h-[1px] w-[calc(100%-16px)] bg-white/5" />
+                  <button className="w-full px-3 py-1.5 text-left text-red-500 transition-colors hover:bg-red-500/20 hover:text-red-400" onClick={() => { void handleDelete(menu.node!) }}>
+                    Delete
+                  </button>
+                </>
+              )}
             </div>
           ) : null}
         </div>

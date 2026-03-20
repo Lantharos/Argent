@@ -272,6 +272,8 @@ declare global {
         openFile: (cwd: string | null) => Promise<string | null>
         readFile: (path: string) => Promise<string>
         saveFile: (path: string, content: string) => Promise<boolean>
+        createFile: (path: string) => Promise<boolean>
+        createDir: (path: string) => Promise<boolean>
         readDir: (path: string) => Promise<{name: string, isDirectory: boolean, path: string}[]>
         delete: (path: string) => Promise<boolean>
         copy: (src: string, dest: string) => Promise<boolean>

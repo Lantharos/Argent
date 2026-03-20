@@ -446,6 +446,30 @@ function setupIpc() {
     return true
   })
 
+  ipcMain.handle('fs:create-file', (_, targetPath) => {
+    try {
+      if (!targetPath || fs.existsSync(targetPath)) {
+        return false
+      }
+      fs.writeFileSync(targetPath, '', { encoding: 'utf8', flag: 'wx' })
+      return true
+    } catch {
+      return false
+    }
+  })
+
+  ipcMain.handle('fs:create-dir', (_, targetPath) => {
+    try {
+      if (!targetPath || fs.existsSync(targetPath)) {
+        return false
+      }
+      fs.mkdirSync(targetPath)
+      return true
+    } catch {
+      return false
+    }
+  })
+
   ipcMain.handle('fs:delete', (_, targetPath) => {
     try {
       fs.rmSync(targetPath, { recursive: true, force: true })
