@@ -6,7 +6,9 @@ import { normalizeProviderKey, ProviderGlyph } from '../tabs/providerIcon'
 type Props = {
   spaces: AppSpace[]
   activeSpaceId: string | null
+  compactMode: boolean
   showShortcutHints: boolean
+  onToggleCompactMode: (value: boolean) => void
   onActivateSpace: (spaceId: string) => void
   onAddSpaceFromFolder: () => Promise<boolean>
   onAddEmptySpace: () => Promise<boolean>
@@ -386,7 +388,9 @@ function withCredentialsUrl(input: string, username: string, passwordOrToken: st
 export function SpaceSidebar({
   spaces,
   activeSpaceId,
+  compactMode,
   showShortcutHints,
+  onToggleCompactMode,
   onActivateSpace,
   onAddSpaceFromFolder,
   onAddEmptySpace,
@@ -411,6 +415,7 @@ export function SpaceSidebar({
   const [cloneRepoError, setCloneRepoError] = useState<string | null>(null)
   const [cloneRepoBusy, setCloneRepoBusy] = useState(false)
   const [cloneMode, setCloneMode] = useState(false)
+  const [sidebarMenu, setSidebarMenu] = useState<{ x: number; y: number } | null>(null)
   const [cloneParentDir, setCloneParentDir] = useState<string | null>(null)
   const [cloneAuthRequired, setCloneAuthRequired] = useState(false)
   const [cloneUsername, setCloneUsername] = useState('')
@@ -419,11 +424,13 @@ export function SpaceSidebar({
   const visibleSpaceMenu = spaceMenu && existingSpaceIds.has(spaceMenu.spaceId) ? spaceMenu : null
   const visibleSpaceMenuSpace = visibleSpaceMenu ? spaces.find((entry) => entry.id === visibleSpaceMenu.spaceId) ?? null : null
   const visibleEditingSpace = editingSpace && existingSpaceIds.has(editingSpace.spaceId) ? editingSpace : null
+  const hasOpenPopover = Boolean(visibleSpaceMenu || addSpaceMenu || sidebarMenu || cloneMode)
 
   const sidebarRef = useRef<HTMLElement | null>(null)
   const addSpaceButtonRef = useRef<HTMLButtonElement | null>(null)
   const spaceMenuRef = useRef<HTMLDivElement | null>(null)
   const addSpaceMenuRef = useRef<HTMLDivElement | null>(null)
+  const sidebarMenuRef = useRef<HTMLDivElement | null>(null)
   const windowDragRef = useRef<{ pointerStartX: number; pointerStartY: number; windowStartX: number; windowStartY: number } | null>(null)
 
   useEffect(() => {
@@ -435,11 +442,15 @@ export function SpaceSidebar({
       if (addSpaceMenuRef.current && target && addSpaceMenuRef.current.contains(target)) {
         return
       }
+      if (sidebarMenuRef.current && target && sidebarMenuRef.current.contains(target)) {
+        return
+      }
       if (addSpaceButtonRef.current && target && addSpaceButtonRef.current.contains(target)) {
         return
       }
       setSpaceMenu(null)
       setAddSpaceMenu(null)
+      setSidebarMenu(null)
       setCloneMode(false)
       setCloneRepoError(null)
       setCloneAuthRequired(false)
@@ -453,6 +464,13 @@ export function SpaceSidebar({
       document.removeEventListener('contextmenu', closeWhenOutside, true)
     }
   }, [])
+
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('argent:sidebar-popover-lock', { detail: { locked: hasOpenPopover } }))
+    return () => {
+      window.dispatchEvent(new CustomEvent('argent:sidebar-popover-lock', { detail: { locked: false } }))
+    }
+  }, [hasOpenPopover])
 
   useEffect(() => {
     function stopWindowDrag() {
@@ -613,6 +631,7 @@ export function SpaceSidebar({
   }
 
   function toggleAddSpaceMenu() {
+    setSidebarMenu(null)
     if (addSpaceMenu) {
       setAddSpaceMenu(null)
       setCloneMode(false)
@@ -637,6 +656,20 @@ export function SpaceSidebar({
     setCloneParentDir(null)
     setCloneUsername('')
     setClonePasswordOrToken('')
+  }
+
+  function openSidebarMenu(event: React.MouseEvent<HTMLElement>) {
+    const sidebarRect = sidebarRef.current?.getBoundingClientRect()
+    if (!sidebarRect) {
+      return
+    }
+    const menuWidth = 188
+    const menuHeight = 42
+    const x = clamp(event.clientX - sidebarRect.left, 6, sidebarRect.width - menuWidth - 6)
+    const y = clamp(event.clientY - sidebarRect.top, 6, sidebarRect.height - menuHeight - 6)
+    setSidebarMenu({ x, y })
+    setAddSpaceMenu(null)
+    setSpaceMenu(null)
   }
 
   async function handleCloneRepoSubmit(urlOverride?: string) {
@@ -700,9 +733,17 @@ export function SpaceSidebar({
   return (
     <aside
       ref={sidebarRef}
-      className="drag-region w-[292px] flex-shrink-0 flex flex-col pt-3 pb-3 px-3 gap-3 bg-black/26 backdrop-blur-2xl relative"
+      className="drag-region h-full w-[292px] flex-shrink-0 flex flex-col rounded-xl border border-white/8 bg-[#1a1a1a] pt-3 pb-3 px-3 gap-3 shadow-[0_18px_48px_rgba(0,0,0,0.45)] relative"
       onMouseDownCapture={handleSidebarMouseDown}
       onContextMenuCapture={signalUiInteraction}
+      onContextMenu={(event) => {
+        const target = event.target as Element | null
+        if (target?.closest('[data-space-menu-area="true"], [data-space-entry="true"]')) {
+          return
+        }
+        event.preventDefault()
+        openSidebarMenu(event)
+      }}
     >
       <div className="no-drag-region flex items-center justify-between px-2">
         <div className="text-sm font-semibold text-[#d0d0d0] tracking-wide">Argent</div>
@@ -867,7 +908,7 @@ export function SpaceSidebar({
           const tabShortcutLabels = getTabShortcutLabels(space)
 
           return (
-            <div key={space.id} className="drag-region flex flex-col">
+            <div key={space.id} className="drag-region flex flex-col" data-space-entry="true">
               <div className={`drag-region group relative w-full rounded-lg transition-colors ${isActive ? 'bg-white/10' : 'hover:bg-white/8'}`}>
                 <button
                   className={`relative w-full text-[13px] px-2.5 pr-8 py-1.5 rounded-lg transition-colors flex items-center gap-2 font-medium cursor-pointer text-left ${isActive ? 'text-[#f1f1f1]' : 'text-[#b6b6b6]'}`}
@@ -1206,6 +1247,25 @@ export function SpaceSidebar({
         })}
       </div>
 
+      {sidebarMenu ? (
+        <div
+          ref={sidebarMenuRef}
+          data-space-menu-area="true"
+          className="no-drag-region absolute z-50 w-44 rounded-md border border-white/5 bg-[#141414]/90 py-1.5 text-[12px] text-[#a3a3a3] shadow-2xl backdrop-blur-xl"
+          style={{ left: sidebarMenu.x, top: sidebarMenu.y }}
+        >
+          <button
+            className="w-full text-left px-3 py-1.5 transition-colors hover:bg-white/10 hover:text-[#d4d4d4]"
+            onClick={() => {
+              onToggleCompactMode(!compactMode)
+              setSidebarMenu(null)
+            }}
+          >
+            {compactMode ? 'Disable Compact Mode' : 'Enable Compact Mode'}
+          </button>
+        </div>
+      ) : null}
+
       {visibleSpaceMenu ? (
         <div
           ref={spaceMenuRef}
@@ -1256,5 +1316,6 @@ export function SpaceSidebar({
       ) : null}
 
     </aside>
+    
   )
 }

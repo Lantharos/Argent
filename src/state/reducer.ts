@@ -4,6 +4,7 @@ import { createTab } from './tabFactory'
 
 type Action =
   | { type: 'replace'; value: AppSnapshot }
+  | { type: 'set-compact-sidebar'; value: boolean }
   | { type: 'add-space'; space: AppSpace }
   | { type: 'rename-space'; spaceId: string; name: string }
   | { type: 'delete-space'; spaceId: string }
@@ -352,6 +353,14 @@ export function appReducer(state: AppSnapshot, action: Action): AppSnapshot {
     return {
       ...action.value,
       spaces: action.value.spaces.map(normalizeSpace),
+      compactSidebar: action.value.compactSidebar ?? false,
+    }
+  }
+
+  if (action.type === 'set-compact-sidebar') {
+    return {
+      ...state,
+      compactSidebar: action.value,
     }
   }
 

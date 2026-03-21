@@ -38,5 +38,6 @@ export function defaultSnapshot(): AppSnapshot {
   return {
     spaces: [],
     activeSpaceId: null,
+    compactSidebar: false,
   }
 }

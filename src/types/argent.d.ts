@@ -174,6 +174,7 @@ export type AppSpace = {
 export type AppSnapshot = {
   spaces: AppSpace[]
   activeSpaceId: string | null
+  compactSidebar?: boolean
 }
 
 declare global {

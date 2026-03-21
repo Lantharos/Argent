@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useState } from 'react'
+import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import type {
   AppSnapshot,
@@ -128,9 +128,64 @@ function App() {
   const [providers, setProviders] = useState<ProviderConfig[]>([])
   const [homeDirectory, setHomeDirectory] = useState('')
   const [isCtrlHeld, setIsCtrlHeld] = useState(false)
+  const [compactSidebarRevealed, setCompactSidebarRevealed] = useState(false)
+  const [compactSidebarPopoverLocked, setCompactSidebarPopoverLocked] = useState(false)
+  const compactSidebarCloseTimerRef = useRef<number | null>(null)
+  const compactSidebarHoverFrameRef = useRef<HTMLDivElement | null>(null)
+  const compactSidebarPointerRef = useRef<{ x: number; y: number }>({ x: -1, y: -1 })
 
   const activeSpace = useMemo(() => getActiveSpace(state), [state])
   const activeTab = useMemo(() => getTab(activeSpace, activeSpace?.activeTabId ?? null), [activeSpace])
+  const compactSidebar = state.compactSidebar ?? false
+
+  useEffect(() => {
+    const clearCompactSidebarCloseTimer = () => {
+      if (compactSidebarCloseTimerRef.current !== null) {
+        window.clearTimeout(compactSidebarCloseTimerRef.current)
+        compactSidebarCloseTimerRef.current = null
+      }
+    }
+
+    if (!compactSidebar) {
+      clearCompactSidebarCloseTimer()
+      setCompactSidebarRevealed(false)
+      return
+    }
+
+    const onMouseMove = (event: MouseEvent) => {
+      compactSidebarPointerRef.current = { x: event.clientX, y: event.clientY }
+      if (event.screenX <= 2 || event.clientX <= 26) {
+        clearCompactSidebarCloseTimer()
+        setCompactSidebarRevealed(true)
+      }
+    }
+
+    window.addEventListener('mousemove', onMouseMove)
+    return () => {
+      clearCompactSidebarCloseTimer()
+      window.removeEventListener('mousemove', onMouseMove)
+    }
+  }, [compactSidebar])
+
+  useEffect(() => {
+    const onSidebarPopoverLock = (event: Event) => {
+      const customEvent = event as CustomEvent<{ locked?: boolean }>
+      const locked = Boolean(customEvent.detail?.locked)
+      if (locked && compactSidebarCloseTimerRef.current !== null) {
+        window.clearTimeout(compactSidebarCloseTimerRef.current)
+        compactSidebarCloseTimerRef.current = null
+      }
+      setCompactSidebarPopoverLocked(locked)
+      if (locked) {
+        setCompactSidebarRevealed(true)
+      }
+    }
+
+    window.addEventListener('argent:sidebar-popover-lock', onSidebarPopoverLock as EventListener)
+    return () => {
+      window.removeEventListener('argent:sidebar-popover-lock', onSidebarPopoverLock as EventListener)
+    }
+  }, [])
 
   useEffect(() => {
     async function boot() {
@@ -414,51 +469,57 @@ function App() {
     )
   }
 
+  const sidebar = (
+    <SpaceSidebar
+      spaces={state.spaces}
+      activeSpaceId={state.activeSpaceId}
+      compactMode={compactSidebar}
+      showShortcutHints={isCtrlHeld}
+      onToggleCompactMode={(value: boolean) => dispatch({ type: 'set-compact-sidebar', value })}
+      onActivateSpace={(spaceId: string) => dispatch({ type: 'set-active-space', spaceId })}
+      onAddSpaceFromFolder={addSpaceFromFolder}
+      onAddEmptySpace={addEmptySpace}
+      onCloneRepo={cloneRepoToSpace}
+      onRenameSpace={(spaceId: string, name: string) => dispatch({ type: 'rename-space', spaceId, name })}
+      onDeleteSpace={(spaceId: string) => dispatch({ type: 'delete-space', spaceId })}
+      onOpenSpaceInExplorer={(spaceId: string) => {
+        const target = state.spaces.find((space) => space.id === spaceId)
+        if (!target) {
+          return Promise.resolve(false)
+        }
+        return window.argent.app.openInExplorer(target.rootPath)
+      }}
+      onAddTab={(spaceId: string, tabType: AppTabType) => {
+        dispatch({ type: 'add-tab', spaceId, tabType })
+        dispatch({ type: 'set-active-space', spaceId })
+      }}
+      onSelectTab={(spaceId: string, tabId: string) => {
+        dispatch({ type: 'set-active-space', spaceId })
+        dispatch({ type: 'set-active-tab', spaceId, tabId })
+      }}
+      onReorderTabs={(spaceId: string, sourceTabId: string, targetTabId: string) => {
+        dispatch({ type: 'reorder-tab', spaceId, sourceTabId, targetTabId })
+      }}
+      onCloseTab={(spaceId: string, tabId: string) => {
+        dispatch({ type: 'close-tab', spaceId, tabId })
+      }}
+      onRenameTab={(spaceId: string, tabId: string, title: string) => {
+        dispatch({
+          type: 'update-tab',
+          spaceId,
+          tabId,
+          updater: (tab) => ({
+            ...tab,
+            title,
+          }),
+        })
+      }}
+    />
+  )
+
   return (
     <main className="app-shell">
-      <SpaceSidebar
-        spaces={state.spaces}
-        activeSpaceId={state.activeSpaceId}
-        showShortcutHints={isCtrlHeld}
-        onActivateSpace={(spaceId: string) => dispatch({ type: 'set-active-space', spaceId })}
-        onAddSpaceFromFolder={addSpaceFromFolder}
-        onAddEmptySpace={addEmptySpace}
-        onCloneRepo={cloneRepoToSpace}
-        onRenameSpace={(spaceId: string, name: string) => dispatch({ type: 'rename-space', spaceId, name })}
-        onDeleteSpace={(spaceId: string) => dispatch({ type: 'delete-space', spaceId })}
-        onOpenSpaceInExplorer={(spaceId: string) => {
-          const target = state.spaces.find((space) => space.id === spaceId)
-          if (!target) {
-            return Promise.resolve(false)
-          }
-          return window.argent.app.openInExplorer(target.rootPath)
-        }}
-        onAddTab={(spaceId: string, tabType: AppTabType) => {
-          dispatch({ type: 'add-tab', spaceId, tabType })
-          dispatch({ type: 'set-active-space', spaceId })
-        }}
-        onSelectTab={(spaceId: string, tabId: string) => {
-          dispatch({ type: 'set-active-space', spaceId })
-          dispatch({ type: 'set-active-tab', spaceId, tabId })
-        }}
-        onReorderTabs={(spaceId: string, sourceTabId: string, targetTabId: string) => {
-          dispatch({ type: 'reorder-tab', spaceId, sourceTabId, targetTabId })
-        }}
-        onCloseTab={(spaceId: string, tabId: string) => {
-          dispatch({ type: 'close-tab', spaceId, tabId })
-        }}
-        onRenameTab={(spaceId: string, tabId: string, title: string) => {
-          dispatch({
-            type: 'update-tab',
-            spaceId,
-            tabId,
-            updater: (tab) => ({
-              ...tab,
-              title,
-            }),
-          })
-        }}
-      />
+      {!compactSidebar ? sidebar : null}
 
       {activeSpace ? (
         <Workspace
@@ -477,6 +538,68 @@ function App() {
           <EmptyState onCreateSpace={addSpaceFromFolder} />
         </div>
       )}
+
+      {compactSidebar ? (
+        <div className="pointer-events-none absolute inset-0 z-[70]">
+          <div
+            ref={compactSidebarHoverFrameRef}
+            className={`pointer-events-auto absolute inset-y-0 left-0 ${compactSidebarRevealed ? 'w-[312px]' : 'w-8'}`}
+            onContextMenuCapture={() => {
+              if (compactSidebarCloseTimerRef.current !== null) {
+                window.clearTimeout(compactSidebarCloseTimerRef.current)
+                compactSidebarCloseTimerRef.current = null
+              }
+              setCompactSidebarRevealed(true)
+            }}
+            onPointerEnter={() => {
+              if (compactSidebarCloseTimerRef.current !== null) {
+                window.clearTimeout(compactSidebarCloseTimerRef.current)
+                compactSidebarCloseTimerRef.current = null
+              }
+              setCompactSidebarRevealed(true)
+            }}
+            onPointerMove={(event) => {
+              compactSidebarPointerRef.current = { x: event.clientX, y: event.clientY }
+              if (compactSidebarCloseTimerRef.current !== null) {
+                window.clearTimeout(compactSidebarCloseTimerRef.current)
+                compactSidebarCloseTimerRef.current = null
+              }
+            }}
+            onPointerLeave={() => {
+              if (compactSidebarPopoverLocked) {
+                return
+              }
+              if (compactSidebarCloseTimerRef.current !== null) {
+                window.clearTimeout(compactSidebarCloseTimerRef.current)
+              }
+              compactSidebarCloseTimerRef.current = window.setTimeout(() => {
+                const frame = compactSidebarHoverFrameRef.current
+                if (frame) {
+                  const bounds = frame.getBoundingClientRect()
+                  const { x, y } = compactSidebarPointerRef.current
+                  const pointerInsideFrame = x >= bounds.left && x <= bounds.right && y >= bounds.top && y <= bounds.bottom
+                  if (pointerInsideFrame) {
+                    compactSidebarCloseTimerRef.current = null
+                    setCompactSidebarRevealed(true)
+                    return
+                  }
+                }
+                setCompactSidebarRevealed(false)
+                compactSidebarCloseTimerRef.current = null
+              }, 140)
+            }}
+          >
+            <div className="absolute inset-y-0 left-0 w-8" />
+            <div
+              className={`absolute inset-y-0 left-0 pl-3 pr-2 py-3 transition-transform duration-180 ${
+                compactSidebarRevealed ? 'pointer-events-auto translate-x-0' : 'pointer-events-none -translate-x-full'
+              }`}
+            >
+              {sidebar}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <CommandPalette
         spaces={state.spaces}
