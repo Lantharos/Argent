@@ -1004,7 +1004,7 @@ export function SpaceSidebar({
         }}
       >
           {essentialTabs.length > 0 ? (
-          <div className="flex gap-2">
+          <div className={`flex gap-2 rounded-xl border border-dashed transition-colors ${browserTabDragging ? 'border-white/50' : 'border-transparent'}`}>
             {essentialTabs.map((tab) => {
               const isActive = activeEssentialTabId === tab.id
               return (
@@ -1037,13 +1037,17 @@ export function SpaceSidebar({
             })}
           </div>
           ) : null}
-          <div
-            className={`rounded-xl border border-dashed h-12 flex items-center justify-center transition-colors ${
-              browserTabDragging ? 'border-white/50' : 'border-white/30'
-            }`}
-          >
-            <span className="text-[11px] text-[#6a6a6a]">Drop browser tab here</span>
-          </div>
+          {essentialTabs.length === 0 ? (
+            <div
+              className={`rounded-xl border border-dashed flex items-center justify-center overflow-hidden transition-all ${
+                browserTabDragging
+                  ? 'h-12 border-white/50 opacity-100'
+                  : 'h-0 border-transparent opacity-0 pointer-events-none'
+              }`}
+            >
+              <span className="text-[11px] text-[#6a6a6a]">Drop browser tab here</span>
+            </div>
+          ) : null}
         </div>
 
       <div className="drag-region flex flex-col gap-1 px-1">
@@ -1074,7 +1078,7 @@ export function SpaceSidebar({
 
           return (
             <div key={space.id} className="drag-region flex flex-col" data-space-entry="true">
-              <div className={`drag-region group relative w-full rounded-lg transition-colors ${isActive ? 'bg-white/10' : 'hover:bg-white/8'}`}>
+              <div className={`drag-region group relative w-full rounded-lg transition-colors ${isActive ? 'bg-white/10' : browserTabDragging ? '' : 'hover:bg-white/8'}`}>
                 <button
                   className={`relative w-full text-[13px] px-2.5 pr-8 py-1.5 rounded-lg transition-colors flex items-center gap-2 font-medium cursor-pointer text-left ${isActive ? 'text-[#f1f1f1]' : 'text-[#b6b6b6]'}`}
                   onClick={() => {
@@ -1209,7 +1213,7 @@ export function SpaceSidebar({
                       const gridCols = entry.tabs.length >= 4 ? 'grid-cols-2' : entry.tabs.length === 3 ? 'grid-cols-3' : 'grid-cols-2'
 
                       return (
-                        <div key={entry.groupId} className={`drag-region group relative rounded-xl border transition-all ${isGroupActive ? 'border-white/16 bg-white/8' : 'border-white/8 bg-white/4 hover:bg-white/8 hover:border-white/14'}`}>
+                        <div key={entry.groupId} className={`drag-region group relative rounded-xl border transition-all ${isGroupActive ? 'border-white/16 bg-white/8' : browserTabDragging ? 'border-white/8 bg-white/4' : 'border-white/8 bg-white/4 hover:bg-white/8 hover:border-white/14'}`}>
                           <div className={`drag-region grid ${gridCols} gap-1 p-1`}>
                             {entry.tabs.slice(0, 4).map((tab) => {
                               const hasShortcutHint = showTabShortcutHints && tabShortcutLabels.has(tab.id)
@@ -1221,7 +1225,7 @@ export function SpaceSidebar({
                                   onDrop={(event) => onTabDrop(event, space.id, tab.id)}
                                 >
                                   <button
-                                  className={`no-drag-region relative h-8 w-full rounded-[8px] px-1.5 pr-6 text-[11px] flex items-center gap-1.5 truncate transition-colors text-left ${isGroupActive && space.activeTabId === tab.id ? 'bg-white/12 text-[#f1f1f1]' : 'bg-white/6 text-[#a9a9a9] hover:text-[#dadada]'}`}
+                                  className={`no-drag-region relative h-8 w-full rounded-[8px] px-1.5 pr-6 text-[11px] flex items-center gap-1.5 truncate transition-colors text-left ${isGroupActive && space.activeTabId === tab.id ? 'bg-white/12 text-[#f1f1f1]' : browserTabDragging ? 'bg-white/6 text-[#a9a9a9]' : 'bg-white/6 text-[#a9a9a9] hover:text-[#dadada]'}`}
                                   onClick={(event) => {
                                     if (event.altKey) {
                                       return
@@ -1259,7 +1263,7 @@ export function SpaceSidebar({
                                 </button>
 
                                 <button
-                                  className="absolute right-1 top-1/2 -translate-y-1/2 rounded-md p-1 text-[#8e8e8e] opacity-0 transition-all hover:bg-white/12 hover:text-white group-hover/tab:opacity-100"
+                                  className={`absolute right-1 top-1/2 -translate-y-1/2 rounded-md p-1 text-[#8e8e8e] opacity-0 transition-all hover:bg-white/12 hover:text-white ${browserTabDragging ? 'pointer-events-none opacity-0' : 'group-hover/tab:opacity-100'}`}
                                   onClick={(event) => {
                                     event.preventDefault()
                                     event.stopPropagation()
@@ -1309,7 +1313,7 @@ export function SpaceSidebar({
                           </div>
                         ) : (
                           <button
-                            className={`no-drag-region relative flex-1 flex items-center gap-2 px-2.5 py-1.5 text-[12.5px] rounded-md transition-colors text-left truncate ${isActive && space.activeTabId === tab.id ? 'text-[#e9e9e9] bg-white/12' : 'text-[#9a9a9a] hover:text-[#d7d7d7] hover:bg-white/8'}`}
+                            className={`no-drag-region relative flex-1 flex items-center gap-2 px-2.5 py-1.5 text-[12.5px] rounded-md transition-colors text-left truncate ${isActive && space.activeTabId === tab.id ? 'text-[#e9e9e9] bg-white/12' : browserTabDragging ? 'text-[#9a9a9a]' : 'text-[#9a9a9a] hover:text-[#d7d7d7] hover:bg-white/8'}`}
                             draggable
                             onDragStart={(event) => {
                               event.stopPropagation()
@@ -1350,7 +1354,7 @@ export function SpaceSidebar({
                         )}
 
                         <button
-                          className="absolute right-1 p-1 rounded-md opacity-0 group-hover:opacity-100 hover:bg-white/12 text-[#9a9a9a] hover:text-white transition-all cursor-pointer"
+                          className={`absolute right-1 p-1 rounded-md opacity-0 hover:bg-white/12 text-[#9a9a9a] hover:text-white transition-all cursor-pointer ${browserTabDragging ? 'pointer-events-none opacity-0' : 'group-hover:opacity-100'}`}
                           onClick={() => onCloseTab(space.id, tab.id)}
                         >
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
