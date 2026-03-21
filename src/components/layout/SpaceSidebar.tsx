@@ -6,6 +6,7 @@ import { normalizeProviderKey, ProviderGlyph } from '../tabs/providerIcon'
 type Props = {
   spaces: AppSpace[]
   activeSpaceId: string | null
+  showShortcutHints: boolean
   onActivateSpace: (spaceId: string) => void
   onAddSpaceFromFolder: () => Promise<boolean>
   onAddEmptySpace: () => Promise<boolean>
@@ -36,6 +37,11 @@ type SidebarEntry =
 
 const TAB_DRAG_MIME = 'application/x-argent-tab'
 const TAB_DRAG_FALLBACK_PREFIX = 'argent-tab:'
+const SHORTCUT_LIMIT = 10
+
+function getShortcutLabel(index: number) {
+  return index === 9 ? '0' : String(index + 1)
+}
 
 function defaultTabTitle(type: AppTabType) {
   if (type === 'ai') return 'AI Chat'
@@ -192,6 +198,85 @@ function collectGroupTabIds(node: AppTabSplitNode, out: string[]) {
   collectGroupTabIds(node.second, out)
 }
 
+function getPreferredGroupTabId(space: AppSpace, groupedTabs: AppTab[]): string {
+  if (groupedTabs.some((tab) => tab.id === space.activeTabId)) {
+    return space.activeTabId
+  }
+
+  const history = space.tabHistory ?? []
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const candidate = history[index]
+    if (groupedTabs.some((tab) => tab.id === candidate)) {
+      return candidate
+    }
+  }
+
+  return groupedTabs[0]?.id ?? ''
+}
+
+function getTabShortcutLabels(space: AppSpace): Map<string, string> {
+  const labels = new Map<string, string>()
+  const groups = space.tabGroups ?? []
+  if (groups.length === 0) {
+    space.tabs.slice(0, SHORTCUT_LIMIT).forEach((tab, index) => {
+      labels.set(tab.id, getShortcutLabel(index))
+    })
+    return labels
+  }
+
+  const groupByTab = new Map<string, AppTabGroup>()
+  for (const group of groups) {
+    const ids: string[] = []
+    collectGroupTabIds(group.root, ids)
+    for (const id of ids) {
+      groupByTab.set(id, group)
+    }
+  }
+
+  const emittedGroups = new Set<string>()
+  let shortcutIndex = 0
+
+  for (const tab of space.tabs) {
+    if (shortcutIndex >= SHORTCUT_LIMIT) {
+      break
+    }
+
+    const group = groupByTab.get(tab.id)
+    if (!group) {
+      labels.set(tab.id, getShortcutLabel(shortcutIndex))
+      shortcutIndex += 1
+      continue
+    }
+
+    if (emittedGroups.has(group.id)) {
+      continue
+    }
+
+    const ids: string[] = []
+    collectGroupTabIds(group.root, ids)
+    const groupedTabs = space.tabs.filter((entry) => ids.includes(entry.id))
+    if (groupedTabs.length < 2) {
+      groupedTabs.forEach((entry) => {
+        if (shortcutIndex < SHORTCUT_LIMIT) {
+          labels.set(entry.id, getShortcutLabel(shortcutIndex))
+          shortcutIndex += 1
+        }
+      })
+      emittedGroups.add(group.id)
+      continue
+    }
+
+    const primaryTabId = getPreferredGroupTabId(space, groupedTabs)
+    if (primaryTabId) {
+      labels.set(primaryTabId, getShortcutLabel(shortcutIndex))
+      shortcutIndex += 1
+    }
+    emittedGroups.add(group.id)
+  }
+
+  return labels
+}
+
 function findGroupForTab(groups: AppTabGroup[] | undefined, tabId: string): AppTabGroup | null {
   if (!groups?.length) {
     return null
@@ -301,6 +386,7 @@ function withCredentialsUrl(input: string, username: string, passwordOrToken: st
 export function SpaceSidebar({
   spaces,
   activeSpaceId,
+  showShortcutHints,
   onActivateSpace,
   onAddSpaceFromFolder,
   onAddEmptySpace,
@@ -759,7 +845,7 @@ export function SpaceSidebar({
       </div>
 
       <div className="drag-region flex flex-col gap-0.5 overflow-auto pr-1">
-        {spaces.map((space) => {
+        {spaces.map((space, spaceIndex) => {
           const isActive = space.id === activeSpaceId
           const isCollapsed = existingSpaceIds.has(space.id) && collapsedSpaceIds.includes(space.id)
           const activeSpaceTab = space.tabs.find((tab) => tab.id === space.activeTabId) ?? null
@@ -776,12 +862,15 @@ export function SpaceSidebar({
           const showCollapsedPreview = isActive && isCollapsed && Boolean(activeSpaceTab)
           const isGlobalSpace = (space.kind ?? 'project') === 'global'
           const entries = buildSidebarEntries(space)
+          const showSpaceShortcutHint = showShortcutHints && spaceIndex < SHORTCUT_LIMIT
+          const showTabShortcutHints = showShortcutHints && isActive
+          const tabShortcutLabels = getTabShortcutLabels(space)
 
           return (
             <div key={space.id} className="drag-region flex flex-col">
               <div className={`drag-region group relative w-full rounded-lg transition-colors ${isActive ? 'bg-white/10' : 'hover:bg-white/8'}`}>
                 <button
-                  className={`w-full text-[13px] px-2.5 pr-8 py-1.5 rounded-lg transition-colors flex items-center gap-2 font-medium cursor-pointer text-left ${isActive ? 'text-[#f1f1f1]' : 'text-[#b6b6b6]'}`}
+                  className={`relative w-full text-[13px] px-2.5 pr-8 py-1.5 rounded-lg transition-colors flex items-center gap-2 font-medium cursor-pointer text-left ${isActive ? 'text-[#f1f1f1]' : 'text-[#b6b6b6]'}`}
                   onClick={() => {
                     toggleCollapsed(space.id)
                   }}
@@ -813,6 +902,15 @@ export function SpaceSidebar({
                   ) : (
                     <span className="truncate">{space.name}</span>
                   )}
+                  {showSpaceShortcutHint ? (
+                    <span
+                      className={`pointer-events-none absolute top-1/2 -translate-y-1/2 rounded-[6px] bg-white/14 px-2 py-[1px] text-[11px] text-[#ececec] transition-all ${
+                        visibleSpaceMenu?.spaceId === space.id ? 'right-8' : 'right-1 group-hover:right-8'
+                      }`}
+                    >
+                      Shift+{getShortcutLabel(spaceIndex)}
+                    </span>
+                  ) : null}
                 </button>
 
                 <button
@@ -861,6 +959,11 @@ export function SpaceSidebar({
                         >
                           <span className="shrink-0">{renderTabIcon(tab)}</span>
                           <span className="truncate">{tab.title}</span>
+                          {showTabShortcutHints && tabShortcutLabels.has(tab.id) ? (
+                            <span className="ml-auto shrink-0 rounded-[5px] bg-white/14 px-1 py-[1px] text-[10px] text-[#ececec]">
+                              {tabShortcutLabels.get(tab.id)}
+                            </span>
+                          ) : null}
                         </button>
                       ))}
                     </div>
@@ -902,15 +1005,17 @@ export function SpaceSidebar({
                       return (
                         <div key={entry.groupId} className={`drag-region group relative rounded-xl border transition-all ${isGroupActive ? 'border-white/16 bg-white/8' : 'border-white/8 bg-white/4 hover:bg-white/8 hover:border-white/14'}`}>
                           <div className={`drag-region grid ${gridCols} gap-1 p-1`}>
-                            {entry.tabs.slice(0, 4).map((tab) => (
-                              <div
-                                key={tab.id}
-                                className="no-drag-region group/tab relative"
-                                onDragOver={(event) => event.preventDefault()}
-                                onDrop={() => onTabDrop(space.id, tab.id)}
-                              >
-                                <button
-                                  className={`h-8 w-full rounded-[8px] px-1.5 pr-6 text-[11px] flex items-center gap-1.5 truncate transition-colors text-left ${isGroupActive && space.activeTabId === tab.id ? 'bg-white/12 text-[#f1f1f1]' : 'bg-white/6 text-[#a9a9a9] hover:text-[#dadada]'}`}
+                            {entry.tabs.slice(0, 4).map((tab) => {
+                              const hasShortcutHint = showTabShortcutHints && tabShortcutLabels.has(tab.id)
+                              return (
+                                <div
+                                  key={tab.id}
+                                  className="no-drag-region group/tab relative"
+                                  onDragOver={(event) => event.preventDefault()}
+                                  onDrop={() => onTabDrop(space.id, tab.id)}
+                                >
+                                  <button
+                                  className={`relative h-8 w-full rounded-[8px] px-1.5 pr-6 text-[11px] flex items-center gap-1.5 truncate transition-colors text-left ${isGroupActive && space.activeTabId === tab.id ? 'bg-white/12 text-[#f1f1f1]' : 'bg-white/6 text-[#a9a9a9] hover:text-[#dadada]'}`}
                                   onClick={(event) => {
                                     if (event.altKey) {
                                       return
@@ -939,7 +1044,12 @@ export function SpaceSidebar({
                                   }}
                                 >
                                   <span className="shrink-0">{renderTabIcon(tab)}</span>
-                                  <span className="truncate">{tab.title}</span>
+                                  <span className={`truncate transition-[padding-right] ${hasShortcutHint ? 'pr-[22px] group-hover/tab:pr-[46px]' : 'pr-1 group-hover/tab:pr-[26px]'}`}>{tab.title}</span>
+                                  {hasShortcutHint ? (
+                                    <span className="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 rounded-[5px] bg-white/14 px-1 py-[1px] text-[10px] text-[#ececec] transition-all group-hover/tab:right-6">
+                                      {tabShortcutLabels.get(tab.id)}
+                                    </span>
+                                  ) : null}
                                 </button>
 
                                 <button
@@ -955,14 +1065,16 @@ export function SpaceSidebar({
                                     <path d="M18 6L6 18M6 6l12 12" />
                                   </svg>
                                 </button>
-                              </div>
-                            ))}
+                                </div>
+                              )
+                            })}
                           </div>
                         </div>
                       )
                     }
 
                     const tab = entry.tab
+                    const hasShortcutHint = showTabShortcutHints && tabShortcutLabels.has(tab.id)
                     return (
                       <div
                         key={tab.id}
@@ -991,7 +1103,7 @@ export function SpaceSidebar({
                           </div>
                         ) : (
                           <button
-                            className={`flex-1 flex items-center gap-2 px-2.5 py-1.5 text-[12.5px] rounded-md transition-colors text-left truncate ${isActive && space.activeTabId === tab.id ? 'text-[#e9e9e9] bg-white/12' : 'text-[#9a9a9a] hover:text-[#d7d7d7] hover:bg-white/8'}`}
+                            className={`relative flex-1 flex items-center gap-2 px-2.5 py-1.5 text-[12.5px] rounded-md transition-colors text-left truncate ${isActive && space.activeTabId === tab.id ? 'text-[#e9e9e9] bg-white/12' : 'text-[#9a9a9a] hover:text-[#d7d7d7] hover:bg-white/8'}`}
                             draggable
                             onDragStart={(event) => setTabDragData(event, space.id, tab.id)}
                             onDragEnd={() => {
@@ -1022,7 +1134,12 @@ export function SpaceSidebar({
                             }}
                           >
                             {renderTabIcon(tab)}
-                            <span className="truncate">{tab.title}</span>
+                            <span className={`truncate transition-[padding-right] ${hasShortcutHint ? 'pr-[22px] group-hover:pr-[46px]' : 'pr-1 group-hover:pr-[26px]'}`}>{tab.title}</span>
+                            {hasShortcutHint ? (
+                              <span className="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 rounded-[6px] bg-white/12 px-1.5 py-[1px] text-[10px] text-[#dcdcdc] transition-all group-hover:right-7">
+                                {tabShortcutLabels.get(tab.id)}
+                              </span>
+                            ) : null}
                           </button>
                         )}
 
