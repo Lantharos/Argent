@@ -568,7 +568,7 @@ function App() {
         const targetSpace = state.spaces.find((space) => space.id === spaceId)
         const targetTab = targetSpace?.tabs.find((tab) => tab.id === tabId)
         if (targetSpace?.isEssential && targetTab?.type === 'browser') {
-          const matchingEssential = (state.essentialTabs ?? []).find((entry) => entry.url === targetTab.url)
+          const matchingEssential = (state.essentialTabs ?? []).find((entry) => entry.id === targetTab.id)
           if (matchingEssential) {
             if (activeEssentialTabId === matchingEssential.id) {
               setActiveEssentialTabId(null)
@@ -589,10 +589,13 @@ function App() {
           }),
         })
       }}
-      onAddEssentialTab={(tab: EssentialTab) => dispatch({ type: 'add-essential-tab', tab })}
       onRemoveEssentialTab={(tabId: string) => {
         if (activeEssentialTabId === tabId) {
           setActiveEssentialTabId(null)
+        }
+        const essentialSpace = state.spaces.find((space) => space.isEssential)
+        if (essentialSpace?.tabs.some((tab) => tab.id === tabId)) {
+          dispatch({ type: 'close-tab', spaceId: essentialSpace.id, tabId })
         }
         dispatch({ type: 'remove-essential-tab', tabId })
       }}
@@ -616,15 +619,13 @@ function App() {
           dispatch({ type: 'add-space', space: essentialSpace })
         }
 
-        const existingEssentialBrowserTab = essentialSpace.tabs.find(
-          (tab) => tab.type === 'browser' && tab.url === essentialTab.url,
-        )
+        const existingEssentialBrowserTab = essentialSpace.tabs.find((tab) => tab.id === essentialTab.id)
 
         if (existingEssentialBrowserTab) {
           dispatch({ type: 'set-active-tab', spaceId: essentialSpace.id, tabId: existingEssentialBrowserTab.id })
         } else {
           const browserTab = {
-            id: createId('browser'),
+            id: essentialTab.id,
             type: 'browser' as const,
             title: essentialTab.title,
             url: essentialTab.url,
@@ -641,6 +642,52 @@ function App() {
 
         dispatch({ type: 'set-active-space', spaceId: essentialSpace.id })
         setActiveEssentialTabId(tabId)
+      }}
+      onAddEssentialTab={(tab: EssentialTab) => {
+        const sourceSpace = state.spaces.find((space) => space.tabs.some((entry) => entry.id === tab.id))
+        dispatch({ type: 'add-essential-tab', tab })
+
+        let essentialSpace = state.spaces.find((space) => space.isEssential)
+        if (!essentialSpace) {
+          essentialSpace = {
+            id: createId('essential'),
+            name: 'Essential',
+            rootPath: homeDirectory || '/',
+            kind: 'global' as const,
+            isEssential: true,
+            tabs: [],
+            activeTabId: '',
+            secondaryTabId: null,
+            tabHistory: [],
+          }
+          dispatch({ type: 'add-space', space: essentialSpace })
+        }
+
+        const alreadyInEssential = essentialSpace.tabs.some((entry) => entry.id === tab.id)
+        if (!alreadyInEssential) {
+          dispatch({
+            type: 'insert-tab-after',
+            spaceId: essentialSpace.id,
+            afterTabId: '',
+            tab: {
+              id: tab.id,
+              type: 'browser' as const,
+              title: tab.title,
+              url: tab.url,
+              faviconUrl: tab.faviconUrl,
+            },
+            activate: true,
+          })
+        } else {
+          dispatch({ type: 'set-active-tab', spaceId: essentialSpace.id, tabId: tab.id })
+        }
+
+        if (sourceSpace && sourceSpace.id !== essentialSpace.id) {
+          dispatch({ type: 'close-tab', spaceId: sourceSpace.id, tabId: tab.id })
+        }
+
+        dispatch({ type: 'set-active-space', spaceId: essentialSpace.id })
+        setActiveEssentialTabId(tab.id)
       }}
       activeEssentialTabId={activeEssentialTabId}
       updateReady={updateReady}

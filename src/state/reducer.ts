@@ -624,9 +624,14 @@ export function appReducer(state: AppSnapshot, action: Action): AppSnapshot {
   }
 
   if (action.type === 'add-essential-tab') {
+    const existing = state.essentialTabs ?? []
+    if (existing.some((tab) => tab.id === action.tab.id || tab.url === action.tab.url)) {
+      return state
+    }
+
     return {
       ...state,
-      essentialTabs: [...(state.essentialTabs ?? []), action.tab],
+      essentialTabs: [...existing, action.tab],
     }
   }
 

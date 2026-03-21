@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Ellipsis, Loader2, RotateCcw, Globe, X } from 'lucide-react'
 import type { AppSpace, AppTab, AppTabGroup, AppTabSplitNode, AppTabType, EssentialTab } from '../../types/argent'
 import { normalizeProviderKey, ProviderGlyph } from '../tabs/providerIcon'
-import { createId } from '../../state/ids'
 
 type Props = {
   spaces: AppSpace[]
@@ -977,7 +976,7 @@ export function SpaceSidebar({
           const tab = space?.tabs.find(t => t.id === payload.tabId)
           if (tab && tab.type === 'browser' && 'url' in tab && tab.url) {
             onAddEssentialTab({
-              id: createId('essential'),
+              id: tab.id,
               title: tab.title,
               url: tab.url,
               faviconUrl: tab.faviconUrl || `https://www.google.com/s2/favicons?domain=${new URL(tab.url).hostname}&sz=32`,

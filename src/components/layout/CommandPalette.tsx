@@ -352,8 +352,13 @@ export function CommandPalette({
       }, ['global empty space'])
     }
 
+    const essentialTabIds = new Set((activeSpace?.isEssential ? activeSpace.tabs : []).map((tab) => tab.id))
+
     for (const space of spaces) {
       for (const tab of space.tabs) {
+        if (space.isEssential && !essentialTabIds.has(tab.id)) {
+          continue
+        }
         const tabTitle = tab.type === 'terminal' ? getTerminalPaletteTitle(tab.title) : tab.title
         pushIfMatches({
           id: `tab-${space.id}-${tab.id}`,
