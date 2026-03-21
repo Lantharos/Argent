@@ -56,6 +56,12 @@ function getParentPath(filePath: string) {
   return segments.slice(0, -1).join('/')
 }
 
+function getPathBaseName(filePath: string) {
+  const normalized = filePath.replace(/[\\/]+$/, '')
+  const parts = normalized.split(/[/\\]/).filter(Boolean)
+  return parts.at(-1) ?? normalized
+}
+
 function joinTreePath(dirPath: string, name: string) {
   return dirPath.replace(/[\\/]+$/, '') + '/' + name
 }
@@ -66,12 +72,12 @@ function isTreeItemTarget(target: EventTarget | null) {
 
 function getContextMenuHeight(node: ContextMenuNode) {
   if (node.isWorkspaceRoot) {
-    return 120
+    return 156
   }
   if (node.isDirectory) {
-    return 228
+    return 260
   }
-  return 160
+  return 192
 }
 
 function FileTreeItem({
@@ -305,6 +311,7 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
   const [installingServer, setInstallingServer] = useState(false)
   const [installMessage, setInstallMessage] = useState<string | null>(null)
   const [startingServer, setStartingServer] = useState(false)
+  const [rootExpanded, setRootExpanded] = useState(true)
 
   const isSidebarOpen = tab.sidebarOpen ?? true
   const fontSize = tab.fontSize ?? 14
@@ -623,6 +630,7 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
   const installSupported = Boolean(serverStatus?.install?.supported)
   const installLabel = serverStatus?.install?.label ?? 'Install LSP'
   const canStartServer = languageConfig.support === 'lsp' && serverStatus?.status === 'stopped'
+  const workspaceRootName = useMemo(() => getPathBaseName(cwd), [cwd])
 
   async function handleInstallServer() {
     setInstallingServer(true)
@@ -693,6 +701,17 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
       setClipboard(null)
     }
     setRefreshCount((count) => count + 1)
+    setMenu(null)
+  }
+
+  async function handleRevealInExplorer(node: ContextMenuNode | null) {
+    if (!node?.path) {
+      return
+    }
+    const opened = await window.argent.app.openInExplorer(node.path)
+    if (!opened) {
+      setExternalChangeNotice('Could not reveal path in Explorer.')
+    }
     setMenu(null)
   }
 
@@ -840,28 +859,52 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
           }}
         >
           <div className="flex-1 overflow-y-auto p-1.5 pt-2 scrollbar-hide">
-            {rootNodes.map((node) => (
-              <FileTreeItem
-                key={node.path}
-                node={node}
-                currentFilePath={tab.filePath}
-                onSelect={handleSelectFile}
-                onSelectInNewTab={handleSelectFileInNewTab}
-                onContextMenu={handleContextMenu}
-                onDropNode={handleDropNode}
-                pendingCreate={pendingCreate}
-                creatingItem={creatingItem}
-                onPendingCreateChange={(value) => {
-                  setPendingCreate((current) => (current ? { ...current, value } : current))
-                }}
-                onPendingCreateSubmit={() => {
-                  void handlePendingCreateSubmit()
-                }}
-                onPendingCreateCancel={() => setPendingCreate(null)}
-                clipboard={clipboard}
-                refreshCount={refreshCount}
-              />
-            ))}
+            <div
+              data-argent-tree-item="true"
+              className="mb-1.5 flex cursor-pointer items-center gap-1.5 rounded px-1.5 py-1 text-[12px] text-[#cecece] transition-colors hover:bg-white/6"
+              onClick={() => setRootExpanded((value) => !value)}
+              onContextMenu={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                handleContextMenu(
+                  event,
+                  { name: workspaceRootName, path: cwd, isDirectory: true, isWorkspaceRoot: true },
+                  event.currentTarget.getBoundingClientRect(),
+                )
+              }}
+              title={cwd}
+            >
+              {rootExpanded ? (
+                <FolderOpen size={14} className="shrink-0 text-[#b8b8b8]" />
+              ) : (
+                <Folder size={14} className="shrink-0 text-[#b8b8b8]" />
+              )}
+              <span className="truncate font-medium">{workspaceRootName}</span>
+            </div>
+            {rootExpanded ? (
+              rootNodes.map((node) => (
+                <FileTreeItem
+                  key={node.path}
+                  node={node}
+                  currentFilePath={tab.filePath}
+                  onSelect={handleSelectFile}
+                  onSelectInNewTab={handleSelectFileInNewTab}
+                  onContextMenu={handleContextMenu}
+                  onDropNode={handleDropNode}
+                  pendingCreate={pendingCreate}
+                  creatingItem={creatingItem}
+                  onPendingCreateChange={(value) => {
+                    setPendingCreate((current) => (current ? { ...current, value } : current))
+                  }}
+                  onPendingCreateSubmit={() => {
+                    void handlePendingCreateSubmit()
+                  }}
+                  onPendingCreateCancel={() => setPendingCreate(null)}
+                  clipboard={clipboard}
+                  refreshCount={refreshCount}
+                />
+              ))
+            ) : null}
             {pendingCreate?.parentPath === cwd ? (
               <div className="mt-1 flex items-center gap-1.5 rounded px-1.5 py-1 text-sm text-[#d4d4d4]">
                 <span className="flex w-4 justify-center opacity-60 text-[#888]" />
@@ -917,6 +960,10 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
                   >
                     Paste
                   </button>
+                  <div className="mx-auto my-1.5 h-[1px] w-[calc(100%-16px)] bg-white/5" />
+                  <button className="w-full px-3 py-1.5 text-left transition-colors hover:bg-white/10 hover:text-[#d4d4d4]" onClick={() => { void handleRevealInExplorer(menu.node) }}>
+                    Reveal in Explorer
+                  </button>
                 </>
               ) : (
                 <>
@@ -943,6 +990,10 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
                     disabled={!clipboard}
                   >
                     Paste
+                  </button>
+                  <div className="mx-auto my-1.5 h-[1px] w-[calc(100%-16px)] bg-white/5" />
+                  <button className="w-full px-3 py-1.5 text-left transition-colors hover:bg-white/10 hover:text-[#d4d4d4]" onClick={() => { void handleRevealInExplorer(menu.node) }}>
+                    Reveal in Explorer
                   </button>
                   <div className="mx-auto my-1.5 h-[1px] w-[calc(100%-16px)] bg-white/5" />
                   <button className="w-full px-3 py-1.5 text-left text-red-500 transition-colors hover:bg-red-500/20 hover:text-red-400" onClick={() => { void handleDelete(menu.node!) }}>
