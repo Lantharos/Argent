@@ -1,19 +1,11 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { Loader2 } from 'lucide-react'
-import type {
-  AppSnapshot,
-  AppSpace,
-  AppTab,
-  AppTabGroup,
-  AppTabSplitNode,
-  AppTabType,
-  PromptAttachment,
-  ProviderConfig,
-} from './types/argent'
+import type { AppSnapshot, AppSpace, AppTab, AppTabGroup, AppTabSplitNode, AppTabType, EssentialTab, PromptAttachment, ProviderConfig } from './types/argent'
 import { appReducer } from './state/reducer'
 import { defaultSnapshot, createGlobalSpace, createSpace } from './state/snapshot'
 import { getActiveSpace, getTab } from './state/selectors'
 import { createTab } from './state/tabFactory'
+import { createId } from './state/ids'
 import { detectLanguageFromPath } from './editor/languageRegistry'
 import { CommandPalette } from './components/layout/CommandPalette'
 import { EmptyState } from './components/layout/EmptyState'
@@ -30,7 +22,7 @@ function isEditableTarget(target: EventTarget | null) {
     target instanceof HTMLInputElement ||
     target instanceof HTMLTextAreaElement ||
     target instanceof HTMLSelectElement ||
-    target.isContentEditable
+    (target instanceof HTMLElement && target.isContentEditable)
   )
 }
 
@@ -131,6 +123,7 @@ function App() {
   const [isCtrlHeld, setIsCtrlHeld] = useState(false)
   const [compactSidebarRevealed, setCompactSidebarRevealed] = useState(false)
   const [compactSidebarPopoverLocked, setCompactSidebarPopoverLocked] = useState(false)
+  const [activeEssentialTabId, setActiveEssentialTabId] = useState<string | null>(null)
   const compactSidebarCloseTimerRef = useRef<number | null>(null)
   const compactSidebarHoverFrameRef = useRef<HTMLDivElement | null>(null)
   const compactSidebarPointerRef = useRef<{ x: number; y: number }>({ x: -1, y: -1 })
@@ -510,6 +503,9 @@ function App() {
   }
 
   function selectWorkspaceTab(spaceId: string, tabId: string) {
+    if (activeEssentialTabId) {
+      setActiveEssentialTabId(null)
+    }
     dispatch({ type: 'set-active-space', spaceId })
     dispatch({ type: 'set-active-tab', spaceId, tabId })
   }
@@ -538,7 +534,13 @@ function App() {
       activeSpaceId={state.activeSpaceId}
       compactMode={compactSidebar}
       showShortcutHints={isCtrlHeld}
-      onActivateSpace={(spaceId: string) => dispatch({ type: 'set-active-space', spaceId })}
+      essentialTabs={state.essentialTabs ?? []}
+      onActivateSpace={(spaceId: string) => {
+        if (activeEssentialTabId) {
+          setActiveEssentialTabId(null)
+        }
+        dispatch({ type: 'set-active-space', spaceId })
+      }}
       onAddSpaceFromFolder={addSpaceFromFolder}
       onAddEmptySpace={addEmptySpace}
       onCloneRepo={cloneRepoToSpace}
@@ -563,6 +565,17 @@ function App() {
         dispatch({ type: 'reorder-tab', spaceId, sourceTabId, targetTabId })
       }}
       onCloseTab={(spaceId: string, tabId: string) => {
+        const targetSpace = state.spaces.find((space) => space.id === spaceId)
+        const targetTab = targetSpace?.tabs.find((tab) => tab.id === tabId)
+        if (targetSpace?.isEssential && targetTab?.type === 'browser') {
+          const matchingEssential = (state.essentialTabs ?? []).find((entry) => entry.url === targetTab.url)
+          if (matchingEssential) {
+            if (activeEssentialTabId === matchingEssential.id) {
+              setActiveEssentialTabId(null)
+            }
+            dispatch({ type: 'remove-essential-tab', tabId: matchingEssential.id })
+          }
+        }
         dispatch({ type: 'close-tab', spaceId, tabId })
       }}
       onRenameTab={(spaceId: string, tabId: string, title: string) => {
@@ -576,6 +589,60 @@ function App() {
           }),
         })
       }}
+      onAddEssentialTab={(tab: EssentialTab) => dispatch({ type: 'add-essential-tab', tab })}
+      onRemoveEssentialTab={(tabId: string) => {
+        if (activeEssentialTabId === tabId) {
+          setActiveEssentialTabId(null)
+        }
+        dispatch({ type: 'remove-essential-tab', tabId })
+      }}
+      onOpenEssentialTab={(tabId: string) => {
+        const essentialTab = (state.essentialTabs ?? []).find(t => t.id === tabId)
+        if (!essentialTab) return
+
+        let essentialSpace = state.spaces.find(s => s.isEssential)
+        if (!essentialSpace) {
+          essentialSpace = {
+            id: createId('essential'),
+            name: 'Essential',
+            rootPath: homeDirectory || '/',
+            kind: 'global' as const,
+            isEssential: true,
+            tabs: [],
+            activeTabId: '',
+            secondaryTabId: null,
+            tabHistory: [],
+          }
+          dispatch({ type: 'add-space', space: essentialSpace })
+        }
+
+        const existingEssentialBrowserTab = essentialSpace.tabs.find(
+          (tab) => tab.type === 'browser' && tab.url === essentialTab.url,
+        )
+
+        if (existingEssentialBrowserTab) {
+          dispatch({ type: 'set-active-tab', spaceId: essentialSpace.id, tabId: existingEssentialBrowserTab.id })
+        } else {
+          const browserTab = {
+            id: createId('browser'),
+            type: 'browser' as const,
+            title: essentialTab.title,
+            url: essentialTab.url,
+            faviconUrl: essentialTab.faviconUrl,
+          }
+          dispatch({
+            type: 'insert-tab-after',
+            spaceId: essentialSpace.id,
+            afterTabId: '',
+            tab: browserTab,
+            activate: true,
+          })
+        }
+
+        dispatch({ type: 'set-active-space', spaceId: essentialSpace.id })
+        setActiveEssentialTabId(tabId)
+      }}
+      activeEssentialTabId={activeEssentialTabId}
       updateReady={updateReady}
       onRestartToUpdate={() => window.argent.app.restartToUpdate()}
     />
@@ -585,7 +652,7 @@ function App() {
     <main className="app-shell">
       {!compactSidebar ? sidebar : null}
 
-      {activeSpace ? (
+      {activeSpace && activeTab ? (
         <Workspace
           space={activeSpace}
           activeTab={activeTab}

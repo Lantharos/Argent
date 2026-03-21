@@ -15,6 +15,7 @@ import {
   X,
 } from 'lucide-react'
 import type { AppSpace, AppTab, AppTabType } from '../../types/argent'
+import { normalizeProviderKey } from '../tabs/providerIcon'
 
 type CommandPaletteItem = {
   id: string
@@ -103,6 +104,31 @@ function formatTabType(type: AppTabType) {
   if (type === 'terminal') return 'Terminal'
   if (type === 'editor') return 'Editor'
   return 'Git'
+}
+
+function getTerminalPaletteTitle(rawTitle: string) {
+  const trimmed = rawTitle.trim()
+  if (!trimmed) {
+    return 'Terminal'
+  }
+
+  if (normalizeProviderKey(trimmed)) {
+    return trimmed
+  }
+
+  const lower = trimmed.toLowerCase()
+  if (
+    lower.includes('powershell') ||
+    lower.includes('command prompt') ||
+    lower.includes('bash') ||
+    lower.includes('zsh') ||
+    lower.includes('fish') ||
+    lower === 'terminal'
+  ) {
+    return trimmed
+  }
+
+  return 'Terminal'
 }
 
 function getIcon(icon: CommandPaletteItem['icon']) {
@@ -328,9 +354,10 @@ export function CommandPalette({
 
     for (const space of spaces) {
       for (const tab of space.tabs) {
+        const tabTitle = tab.type === 'terminal' ? getTerminalPaletteTitle(tab.title) : tab.title
         pushIfMatches({
           id: `tab-${space.id}-${tab.id}`,
-          title: tab.title,
+          title: tabTitle,
           subtitle: `${space.name} · ${formatTabType(tab.type)}`,
           section: 'Switch To',
           icon: tab.type === 'browser' ? 'browser' : tab.type === 'ai' ? 'ai' : tab.type,

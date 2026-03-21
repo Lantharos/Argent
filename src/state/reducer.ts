@@ -1,4 +1,4 @@
-import type { AppSnapshot, AppSpace, AppTab, AppTabGroup, AppTabSplitNode, AppTabType, SplitOrientation } from '../types/argent'
+import type { AppSnapshot, AppSpace, AppTab, AppTabGroup, AppTabSplitNode, AppTabType, EssentialTab, SplitOrientation } from '../types/argent'
 import { createId } from './ids'
 import { createTab } from './tabFactory'
 
@@ -24,6 +24,9 @@ type Action =
   | { type: 'set-secondary-tab'; spaceId: string; tabId: string | null }
   | { type: 'update-tab'; spaceId: string; tabId: string; updater: (tab: AppTab) => AppTab }
   | { type: 'close-tab'; spaceId: string; tabId: string }
+  | { type: 'add-essential-tab'; tab: EssentialTab }
+  | { type: 'remove-essential-tab'; tabId: string }
+  | { type: 'update-essential-tab'; tabId: string; updater: (tab: EssentialTab) => EssentialTab }
 
 function updateSpace(state: AppSnapshot, spaceId: string, updater: (space: AppSpace) => AppSpace): AppSnapshot {
   return {
@@ -354,6 +357,7 @@ export function appReducer(state: AppSnapshot, action: Action): AppSnapshot {
       ...action.value,
       spaces: action.value.spaces.map(normalizeSpace),
       compactSidebar: action.value.compactSidebar ?? false,
+      essentialTabs: action.value.essentialTabs ?? [],
     }
   }
 
@@ -617,6 +621,27 @@ export function appReducer(state: AppSnapshot, action: Action): AppSnapshot {
         tabHistory: nextHistory,
       }
     })
+  }
+
+  if (action.type === 'add-essential-tab') {
+    return {
+      ...state,
+      essentialTabs: [...(state.essentialTabs ?? []), action.tab],
+    }
+  }
+
+  if (action.type === 'remove-essential-tab') {
+    return {
+      ...state,
+      essentialTabs: (state.essentialTabs ?? []).filter((tab) => tab.id !== action.tabId),
+    }
+  }
+
+  if (action.type === 'update-essential-tab') {
+    return {
+      ...state,
+      essentialTabs: (state.essentialTabs ?? []).map((tab) => (tab.id === action.tabId ? action.updater(tab) : tab)),
+    }
   }
 
   return state

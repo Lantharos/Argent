@@ -159,11 +159,19 @@ export type AppTabGroup = {
   root: AppTabSplitNode
 }
 
+export type EssentialTab = {
+  id: string
+  title: string
+  url: string
+  faviconUrl: string | null
+}
+
 export type AppSpace = {
   id: string
   name: string
   rootPath: string
   kind?: 'project' | 'global'
+  isEssential?: boolean
   tabs: AppTab[]
   activeTabId: string
   secondaryTabId: string | null
@@ -175,6 +183,7 @@ export type AppSnapshot = {
   spaces: AppSpace[]
   activeSpaceId: string | null
   compactSidebar?: boolean
+  essentialTabs?: EssentialTab[]
 }
 
 declare global {

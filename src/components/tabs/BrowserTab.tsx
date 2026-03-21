@@ -235,9 +235,9 @@ export function BrowserTab({ tab, onChange }: Props) {
 
   return (
     <section className="tab-pane browser-tab relative">
-      <div className="absolute top-0 left-0 right-0 z-30 h-9 px-2 bg-black/26 backdrop-blur-2xl shadow-[inset_0_-1px_0_0_rgba(255,255,255,0.05)]">
+      <div className="absolute top-0 left-0 right-0 z-[85] h-9 px-2 bg-black/26 backdrop-blur-2xl shadow-[inset_0_-1px_0_0_rgba(255,255,255,0.05)]">
         <div className="absolute inset-0 [-webkit-app-region:drag]" aria-hidden="true" />
-        <div className="browser-top-controls relative z-10 h-full flex items-center gap-1">
+        <div className="browser-top-controls relative z-[86] h-full flex items-center gap-1">
           <div className="inline-flex items-center gap-0.5 shrink-0">
             <button
               className="size-7 rounded-md border border-transparent bg-transparent text-[#d0d0d0] inline-flex items-center justify-center hover:bg-white/10 disabled:opacity-45 disabled:hover:bg-transparent transition-colors"

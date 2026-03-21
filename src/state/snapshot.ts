@@ -34,10 +34,27 @@ export function createGlobalSpace(homePath: string): AppSpace {
   }
 }
 
+export function createEssentialSpace(homePath: string): AppSpace {
+  const browser = createTab('browser', homePath)
+
+  return {
+    id: createId('essential'),
+    name: 'Essential',
+    rootPath: homePath,
+    kind: 'global',
+    isEssential: true,
+    tabs: [browser],
+    activeTabId: browser.id,
+    secondaryTabId: null,
+    tabHistory: [],
+  }
+}
+
 export function defaultSnapshot(): AppSnapshot {
   return {
     spaces: [],
     activeSpaceId: null,
     compactSidebar: false,
+    essentialTabs: [],
   }
 }

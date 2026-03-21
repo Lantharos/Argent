@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Ellipsis, Loader2, RotateCcw } from 'lucide-react'
-import type { AppSpace, AppTab, AppTabGroup, AppTabSplitNode, AppTabType } from '../../types/argent'
+import { Ellipsis, Loader2, RotateCcw, Globe, X } from 'lucide-react'
+import type { AppSpace, AppTab, AppTabGroup, AppTabSplitNode, AppTabType, EssentialTab } from '../../types/argent'
 import { normalizeProviderKey, ProviderGlyph } from '../tabs/providerIcon'
+import { createId } from '../../state/ids'
 
 type Props = {
   spaces: AppSpace[]
   activeSpaceId: string | null
   compactMode: boolean
   showShortcutHints: boolean
+  essentialTabs: EssentialTab[]
+  activeEssentialTabId: string | null
   onActivateSpace: (spaceId: string) => void
   onAddSpaceFromFolder: () => Promise<boolean>
   onAddEmptySpace: () => Promise<boolean>
@@ -20,6 +23,9 @@ type Props = {
   onCloseTab: (spaceId: string, tabId: string) => void
   onAddTab: (spaceId: string, type: AppTabType) => void
   onRenameTab: (spaceId: string, tabId: string, title: string) => void
+  onAddEssentialTab: (tab: EssentialTab) => void
+  onRemoveEssentialTab: (tabId: string) => void
+  onOpenEssentialTab: (tabId: string) => void
   updateReady: { version: string | null } | null
   onRestartToUpdate: () => Promise<boolean>
 }
@@ -41,6 +47,37 @@ type SidebarEntry =
 const TAB_DRAG_MIME = 'application/x-argent-tab'
 const TAB_DRAG_FALLBACK_PREFIX = 'argent-tab:'
 const SHORTCUT_LIMIT = 10
+
+function readDragTabPayload(dataTransfer: DataTransfer | null): { spaceId: string; tabId: string } | null {
+  if (!dataTransfer) {
+    return null
+  }
+
+  const raw = dataTransfer.getData(TAB_DRAG_MIME)
+  const fallbackRaw = dataTransfer.getData('text/plain')
+  const candidate = raw || fallbackRaw
+  if (!candidate) {
+    return null
+  }
+
+  if (candidate.startsWith(TAB_DRAG_FALLBACK_PREFIX)) {
+    const [, spaceId, tabId] = candidate.split(':')
+    if (!spaceId || !tabId) {
+      return null
+    }
+    return { spaceId, tabId }
+  }
+
+  try {
+    const parsed = JSON.parse(candidate) as { spaceId?: string; tabId?: string }
+    if (!parsed.spaceId || !parsed.tabId) {
+      return null
+    }
+    return { spaceId: parsed.spaceId, tabId: parsed.tabId }
+  } catch {
+    return null
+  }
+}
 
 function getShortcutLabel(index: number) {
   return index === 9 ? '0' : String(index + 1)
@@ -174,7 +211,7 @@ function renderTabIcon(tab: AppTab) {
   }
 
   if (tab.type === 'browser' && tab.faviconUrl) {
-    return <img className="w-[16px] h-[16px] rounded-[4px] shrink-0" src={tab.faviconUrl} alt="" />
+    return <img className="w-[16px] h-[16px] rounded-[4px] shrink-0 pointer-events-none" src={tab.faviconUrl} alt="" draggable={false} />
   }
 
   if (tab.type === 'terminal') {
@@ -391,6 +428,8 @@ export function SpaceSidebar({
   activeSpaceId,
   compactMode,
   showShortcutHints,
+  essentialTabs,
+  activeEssentialTabId,
   onActivateSpace,
   onAddSpaceFromFolder,
   onAddEmptySpace,
@@ -403,6 +442,9 @@ export function SpaceSidebar({
   onCloseTab,
   onAddTab,
   onRenameTab,
+  onAddEssentialTab,
+  onRemoveEssentialTab,
+  onOpenEssentialTab,
   updateReady,
   onRestartToUpdate,
 }: Props) {
@@ -421,6 +463,7 @@ export function SpaceSidebar({
   const [cloneAuthRequired, setCloneAuthRequired] = useState(false)
   const [cloneUsername, setCloneUsername] = useState('')
   const [clonePasswordOrToken, setClonePasswordOrToken] = useState('')
+  const [browserTabDragging, setBrowserTabDragging] = useState(false)
   const existingSpaceIds = useMemo(() => new Set(spaces.map((space) => space.id)), [spaces])
   const visibleSpaceMenu = spaceMenu && existingSpaceIds.has(spaceMenu.spaceId) ? spaceMenu : null
   const visibleSpaceMenuSpace = visibleSpaceMenu ? spaces.find((entry) => entry.id === visibleSpaceMenu.spaceId) ?? null : null
@@ -516,28 +559,56 @@ export function SpaceSidebar({
     )
   }
 
-  function onTabDrop(spaceId: string, targetTabId: string) {
-    if (!dragTabPayload || dragTabPayload.spaceId !== spaceId || dragTabPayload.tabId === targetTabId) {
-      setDragTabPayload(null)
-      return
+  function isBrowserTabPayload(payload: { spaceId: string; tabId: string } | null) {
+    if (!payload) {
+      return false
     }
 
-    onReorderTabs(spaceId, dragTabPayload.tabId, targetTabId)
-    setDragTabPayload(null)
+    const space = spaces.find((entry) => entry.id === payload.spaceId)
+    const tab = space?.tabs.find((entry) => entry.id === payload.tabId)
+    return Boolean(tab && tab.type === 'browser' && 'url' in tab && tab.url)
   }
 
-  function setTabDragData(event: React.DragEvent<HTMLElement>, spaceId: string, tabId: string, options?: { requireAlt?: boolean }) {
-    if (options?.requireAlt && !event.altKey) {
-      event.preventDefault()
+  function clearTabDragState() {
+    setBrowserTabDragging(false)
+    setDragTabPayload(null)
+    window.dispatchEvent(new Event('argent:tab-drag-end'))
+  }
+
+  function onTabDrop(event: React.DragEvent<HTMLElement>, spaceId: string, targetTabId: string) {
+    event.preventDefault()
+    const payload = dragTabPayload ?? readDragTabPayload(event.dataTransfer)
+    if (!payload || payload.spaceId !== spaceId || payload.tabId === targetTabId) {
+      clearTabDragState()
       return
     }
 
-    const payload = JSON.stringify({ spaceId, tabId })
+    onReorderTabs(spaceId, payload.tabId, targetTabId)
+    clearTabDragState()
+  }
+
+  useEffect(() => {
+    const clearDragState = () => {
+      setBrowserTabDragging(false)
+      setDragTabPayload(null)
+    }
+
+    window.addEventListener('dragend', clearDragState)
+    window.addEventListener('drop', clearDragState)
+    return () => {
+      window.removeEventListener('dragend', clearDragState)
+      window.removeEventListener('drop', clearDragState)
+    }
+  }, [])
+
+  function setTabDragData(event: React.DragEvent<HTMLElement>, spaceId: string, tab: AppTab) {
+    const payload = JSON.stringify({ spaceId, tabId: tab.id })
     event.dataTransfer.setData(TAB_DRAG_MIME, payload)
-    event.dataTransfer.setData('text/plain', `${TAB_DRAG_FALLBACK_PREFIX}${spaceId}:${tabId}`)
+    event.dataTransfer.setData('text/plain', `${TAB_DRAG_FALLBACK_PREFIX}${spaceId}:${tab.id}`)
     event.dataTransfer.effectAllowed = 'move'
-    setDragTabPayload({ spaceId, tabId })
-    window.dispatchEvent(new CustomEvent('argent:tab-drag-start', { detail: { spaceId, tabId } }))
+    setDragTabPayload({ spaceId, tabId: tab.id })
+    setBrowserTabDragging(tab.type === 'browser')
+    window.dispatchEvent(new CustomEvent('argent:tab-drag-start', { detail: { spaceId, tabId: tab.id } }))
   }
 
   function commitTabRename(spaceId: string, tabId: string, fallbackType: AppTabType) {
@@ -892,13 +963,96 @@ export function SpaceSidebar({
         </div>
       ) : null}
 
+      <div
+        className="no-drag-region flex flex-col gap-1.5"
+        onDrop={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          const payload = dragTabPayload ?? readDragTabPayload(e.dataTransfer)
+          if (!payload) {
+            setBrowserTabDragging(false)
+            return
+          }
+          const space = spaces.find(s => s.id === payload.spaceId)
+          const tab = space?.tabs.find(t => t.id === payload.tabId)
+          if (tab && tab.type === 'browser' && 'url' in tab && tab.url) {
+            onAddEssentialTab({
+              id: createId('essential'),
+              title: tab.title,
+              url: tab.url,
+              faviconUrl: tab.faviconUrl || `https://www.google.com/s2/favicons?domain=${new URL(tab.url).hostname}&sz=32`,
+            })
+          }
+          setBrowserTabDragging(false)
+          setDragTabPayload(null)
+        }}
+        onDragOver={(e) => {
+          const payload = dragTabPayload ?? readDragTabPayload(e.dataTransfer)
+          if (browserTabDragging || isBrowserTabPayload(payload)) {
+            e.preventDefault()
+            e.dataTransfer.dropEffect = 'move'
+            setBrowserTabDragging(true)
+          }
+        }}
+        onDragEnter={(e) => {
+          const payload = dragTabPayload ?? readDragTabPayload(e.dataTransfer)
+          if (browserTabDragging || isBrowserTabPayload(payload)) {
+            e.preventDefault()
+            e.dataTransfer.dropEffect = 'move'
+            setBrowserTabDragging(true)
+          }
+        }}
+      >
+          {essentialTabs.length > 0 ? (
+          <div className="flex gap-2">
+            {essentialTabs.map((tab) => {
+              const isActive = activeEssentialTabId === tab.id
+              return (
+              <div key={tab.id} className="group relative flex-1 min-w-0">
+                <button
+                  type="button"
+                  className={`w-full h-12 rounded-xl transition-all duration-150 flex items-center justify-center px-2 cursor-pointer ${
+                    isActive ? 'bg-white/12 border border-white/16' : 'bg-white/6 hover:bg-white/10 border border-transparent'
+                  }`}
+                  onClick={() => onOpenEssentialTab(tab.id)}
+                >
+                  {tab.faviconUrl ? (
+                    <img className="w-6 h-6 rounded shrink-0 pointer-events-none" src={tab.faviconUrl} alt="" draggable={false} />
+                  ) : (
+                    <Globe className="w-6 h-6 shrink-0 text-[#6a6a6a]" />
+                  )}
+                </button>
+                <button
+                  className="absolute -top-1 -right-1 p-0.5 rounded-full bg-[#1a1a1a] border border-white/12 opacity-0 group-hover:opacity-100 hover:bg-red-500/80 text-[#8e8e8e] hover:text-white transition-all cursor-pointer"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onRemoveEssentialTab(tab.id)
+                  }}
+                  title="Remove"
+                >
+                  <X className="w-2.5 h-2.5" />
+                </button>
+              </div>
+              )
+            })}
+          </div>
+          ) : null}
+          <div
+            className={`rounded-xl border border-dashed h-12 flex items-center justify-center transition-colors ${
+              browserTabDragging ? 'border-white/50' : 'border-white/30'
+            }`}
+          >
+            <span className="text-[11px] text-[#6a6a6a]">Drop browser tab here</span>
+          </div>
+        </div>
+
       <div className="drag-region flex flex-col gap-1 px-1">
         <div className="text-[12px] font-medium text-[#7e7e7e] px-1">Projects</div>
       </div>
 
       <div className="drag-region flex-1 min-h-0 flex flex-col gap-0.5 overflow-auto pr-1">
-        {spaces.map((space, spaceIndex) => {
-          const isActive = space.id === activeSpaceId
+        {spaces.filter(s => !s.isEssential).map((space, spaceIndex) => {
+          const isActive = !activeEssentialTabId && space.id === activeSpaceId
           const isCollapsed = existingSpaceIds.has(space.id) && collapsedSpaceIds.includes(space.id)
           const activeSpaceTab = space.tabs.find((tab) => tab.id === space.activeTabId) ?? null
           const activeSpaceGroup = activeSpaceTab ? findGroupForTab(space.tabGroups, activeSpaceTab.id) : null
@@ -984,7 +1138,7 @@ export function SpaceSidebar({
                       {activeGroupTabs.map((tab) => (
                         <button
                           key={tab.id}
-                          className="h-7 rounded-[7px] px-1.5 text-[11px] flex items-center gap-1.5 truncate bg-white/6 text-[#b9b9b9]"
+                          className="no-drag-region h-7 rounded-[7px] px-1.5 text-[11px] flex items-center gap-1.5 truncate bg-white/6 text-[#b9b9b9]"
                           onClick={() => {
                             onActivateSpace(space.id)
                             onSelectTab(space.id, activeSpaceTab.id)
@@ -1003,11 +1157,11 @@ export function SpaceSidebar({
                             }
                           }}
                           draggable
-                          onDragStart={(event) => setTabDragData(event, space.id, tab.id, { requireAlt: true })}
-                          onDragEnd={() => {
-                            setDragTabPayload(null)
-                            window.dispatchEvent(new Event('argent:tab-drag-end'))
+                          onDragStart={(event) => {
+                            event.stopPropagation()
+                            setTabDragData(event, space.id, tab)
                           }}
+                          onDragEnd={clearTabDragState}
                         >
                           <span className="shrink-0">{renderTabIcon(tab)}</span>
                           <span className="truncate">{tab.title}</span>
@@ -1064,10 +1218,10 @@ export function SpaceSidebar({
                                   key={tab.id}
                                   className="no-drag-region group/tab relative"
                                   onDragOver={(event) => event.preventDefault()}
-                                  onDrop={() => onTabDrop(space.id, tab.id)}
+                                  onDrop={(event) => onTabDrop(event, space.id, tab.id)}
                                 >
                                   <button
-                                  className={`relative h-8 w-full rounded-[8px] px-1.5 pr-6 text-[11px] flex items-center gap-1.5 truncate transition-colors text-left ${isGroupActive && space.activeTabId === tab.id ? 'bg-white/12 text-[#f1f1f1]' : 'bg-white/6 text-[#a9a9a9] hover:text-[#dadada]'}`}
+                                  className={`no-drag-region relative h-8 w-full rounded-[8px] px-1.5 pr-6 text-[11px] flex items-center gap-1.5 truncate transition-colors text-left ${isGroupActive && space.activeTabId === tab.id ? 'bg-white/12 text-[#f1f1f1]' : 'bg-white/6 text-[#a9a9a9] hover:text-[#dadada]'}`}
                                   onClick={(event) => {
                                     if (event.altKey) {
                                       return
@@ -1089,11 +1243,11 @@ export function SpaceSidebar({
                                     }
                                   }}
                                   draggable
-                                  onDragStart={(event) => setTabDragData(event, space.id, tab.id, { requireAlt: true })}
-                                  onDragEnd={() => {
-                                    setDragTabPayload(null)
-                                    window.dispatchEvent(new Event('argent:tab-drag-end'))
+                                  onDragStart={(event) => {
+                                    event.stopPropagation()
+                                    setTabDragData(event, space.id, tab)
                                   }}
+                                  onDragEnd={clearTabDragState}
                                 >
                                   <span className="shrink-0">{renderTabIcon(tab)}</span>
                                   <span className={`truncate transition-[padding-right] ${hasShortcutHint ? 'pr-[22px] group-hover/tab:pr-[46px]' : 'pr-1 group-hover/tab:pr-[26px]'}`}>{tab.title}</span>
@@ -1132,7 +1286,7 @@ export function SpaceSidebar({
                         key={tab.id}
                         className="no-drag-region flex items-center relative group"
                         onDragOver={(event) => event.preventDefault()}
-                        onDrop={() => onTabDrop(space.id, tab.id)}
+                        onDrop={(event) => onTabDrop(event, space.id, tab.id)}
                       >
                         {editingTab?.spaceId === space.id && editingTab?.tabId === tab.id ? (
                           <div className="flex-1 flex items-center gap-2 px-2.5 py-1.5 text-[12.5px] rounded-md bg-white/12">
@@ -1155,13 +1309,13 @@ export function SpaceSidebar({
                           </div>
                         ) : (
                           <button
-                            className={`relative flex-1 flex items-center gap-2 px-2.5 py-1.5 text-[12.5px] rounded-md transition-colors text-left truncate ${isActive && space.activeTabId === tab.id ? 'text-[#e9e9e9] bg-white/12' : 'text-[#9a9a9a] hover:text-[#d7d7d7] hover:bg-white/8'}`}
+                            className={`no-drag-region relative flex-1 flex items-center gap-2 px-2.5 py-1.5 text-[12.5px] rounded-md transition-colors text-left truncate ${isActive && space.activeTabId === tab.id ? 'text-[#e9e9e9] bg-white/12' : 'text-[#9a9a9a] hover:text-[#d7d7d7] hover:bg-white/8'}`}
                             draggable
-                            onDragStart={(event) => setTabDragData(event, space.id, tab.id)}
-                            onDragEnd={() => {
-                              setDragTabPayload(null)
-                              window.dispatchEvent(new Event('argent:tab-drag-end'))
+                            onDragStart={(event) => {
+                              event.stopPropagation()
+                              setTabDragData(event, space.id, tab)
                             }}
+                            onDragEnd={clearTabDragState}
                             onMouseDown={(event) => {
                               if (event.button === 1) {
                                 event.preventDefault()
