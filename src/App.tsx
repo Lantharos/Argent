@@ -160,10 +160,17 @@ function App() {
       }
     }
 
+    const onWindowBlur = () => {
+      clearCompactSidebarCloseTimer()
+      setCompactSidebarRevealed(false)
+    }
+
     window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('blur', onWindowBlur)
     return () => {
       clearCompactSidebarCloseTimer()
       window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('blur', onWindowBlur)
     }
   }, [compactSidebar])
 
