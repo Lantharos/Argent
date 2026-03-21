@@ -964,7 +964,7 @@ export function SpaceSidebar({
       ) : null}
 
       <div
-        className="no-drag-region flex flex-col gap-1.5"
+        className={`no-drag-region flex flex-col ${essentialTabs.length > 0 || browserTabDragging ? 'gap-1.5' : 'gap-0'}`}
         onDrop={(e) => {
           e.preventDefault()
           e.stopPropagation()
@@ -1039,10 +1039,10 @@ export function SpaceSidebar({
           ) : null}
           {essentialTabs.length === 0 ? (
             <div
-              className={`rounded-xl border border-dashed flex items-center justify-center overflow-hidden transition-all ${
+              className={`rounded-xl flex items-center justify-center overflow-hidden transition-all ${
                 browserTabDragging
-                  ? 'h-12 border-white/50 opacity-100'
-                  : 'h-0 border-transparent opacity-0 pointer-events-none'
+                  ? 'h-12 border border-dashed border-white/50 opacity-100'
+                  : 'h-0 border-0 opacity-0 pointer-events-none'
               }`}
             >
               <span className="text-[11px] text-[#6a6a6a]">Drop browser tab here</span>
