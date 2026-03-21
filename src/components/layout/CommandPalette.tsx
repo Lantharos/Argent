@@ -29,10 +29,12 @@ type CommandPaletteItem = {
 type Props = {
   spaces: AppSpace[]
   activeSpaceId: string | null
+  compactSidebar: boolean
   onCreateTab: (spaceId: string, tabType: AppTabType, patch?: Partial<AppTab>) => void
   onSelectTab: (spaceId: string, tabId: string) => void
   onAddSpaceFromFolder: () => Promise<boolean>
   onAddEmptySpace: () => Promise<boolean>
+  onSetCompactMode: (value: boolean) => void
 }
 
 const EXIT_MS = 180
@@ -114,7 +116,16 @@ function getIcon(icon: CommandPaletteItem['icon']) {
   return <Search className="h-[15px] w-[15px]" />
 }
 
-export function CommandPalette({ spaces, activeSpaceId, onCreateTab, onSelectTab, onAddSpaceFromFolder, onAddEmptySpace }: Props) {
+export function CommandPalette({
+  spaces,
+  activeSpaceId,
+  compactSidebar,
+  onCreateTab,
+  onSelectTab,
+  onAddSpaceFromFolder,
+  onAddEmptySpace,
+  onSetCompactMode,
+}: Props) {
   const [open, setOpen] = useState(false)
   const [mounted, setMounted] = useState(false)
   const [visible, setVisible] = useState(false)
@@ -332,8 +343,35 @@ export function CommandPalette({ spaces, activeSpaceId, onCreateTab, onSelectTab
       }
     }
 
+    pushIfMatches(
+      compactSidebar
+        ? {
+            id: 'disable-compact-sidebar',
+            title: 'Disable compact sidebar',
+            subtitle: 'Switch back to the normal pinned sidebar',
+            section: 'View',
+            icon: 'space',
+            run: () => {
+              onSetCompactMode(false)
+              closePalette()
+            },
+          }
+        : {
+            id: 'enable-compact-sidebar',
+            title: 'Enable compact sidebar',
+            subtitle: 'Use edge-reveal sidebar mode',
+            section: 'View',
+            icon: 'space',
+            run: () => {
+              onSetCompactMode(true)
+              closePalette()
+            },
+          },
+      ['compact sidebar view mode', compactSidebar ? 'disable compact' : 'enable compact'],
+    )
+
     return nextItems.slice(0, 24)
-  }, [activeSpace, activeSpaceId, deferredQuery, onAddEmptySpace, onAddSpaceFromFolder, onCreateTab, onSelectTab, spaces])
+  }, [activeSpace, activeSpaceId, compactSidebar, deferredQuery, onAddEmptySpace, onAddSpaceFromFolder, onCreateTab, onSelectTab, onSetCompactMode, spaces])
 
   const selectedIndex = items.length === 0 ? 0 : Math.min(activeIndex, items.length - 1)
 

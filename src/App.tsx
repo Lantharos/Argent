@@ -133,19 +133,45 @@ function App() {
   const compactSidebarCloseTimerRef = useRef<number | null>(null)
   const compactSidebarHoverFrameRef = useRef<HTMLDivElement | null>(null)
   const compactSidebarPointerRef = useRef<{ x: number; y: number }>({ x: -1, y: -1 })
+  const compactSidebarPopoverLockedRef = useRef(false)
 
   const activeSpace = useMemo(() => getActiveSpace(state), [state])
   const activeTab = useMemo(() => getTab(activeSpace, activeSpace?.activeTabId ?? null), [activeSpace])
   const compactSidebar = state.compactSidebar ?? false
 
-  useEffect(() => {
-    const clearCompactSidebarCloseTimer = () => {
-      if (compactSidebarCloseTimerRef.current !== null) {
-        window.clearTimeout(compactSidebarCloseTimerRef.current)
-        compactSidebarCloseTimerRef.current = null
-      }
+  const clearCompactSidebarCloseTimer = () => {
+    if (compactSidebarCloseTimerRef.current !== null) {
+      window.clearTimeout(compactSidebarCloseTimerRef.current)
+      compactSidebarCloseTimerRef.current = null
     }
+  }
 
+  const scheduleCompactSidebarClose = (delay = 140) => {
+    if (compactSidebarPopoverLockedRef.current) {
+      return
+    }
+    clearCompactSidebarCloseTimer()
+    compactSidebarCloseTimerRef.current = window.setTimeout(() => {
+      const frame = compactSidebarHoverFrameRef.current
+      if (frame) {
+        const bounds = frame.getBoundingClientRect()
+        const { x, y } = compactSidebarPointerRef.current
+        const pointerInsideFrame = x >= bounds.left && x <= bounds.right && y >= bounds.top && y <= bounds.bottom
+        if (pointerInsideFrame || compactSidebarPopoverLockedRef.current) {
+          compactSidebarCloseTimerRef.current = null
+          return
+        }
+      }
+      setCompactSidebarRevealed(false)
+      compactSidebarCloseTimerRef.current = null
+    }, delay)
+  }
+
+  useEffect(() => {
+    compactSidebarPopoverLockedRef.current = compactSidebarPopoverLocked
+  }, [compactSidebarPopoverLocked])
+
+  useEffect(() => {
     if (!compactSidebar) {
       clearCompactSidebarCloseTimer()
       setCompactSidebarRevealed(false)
@@ -157,6 +183,27 @@ function App() {
       if (event.screenX <= 2 || event.clientX <= 26) {
         clearCompactSidebarCloseTimer()
         setCompactSidebarRevealed(true)
+        return
+      }
+
+      if (!compactSidebarRevealed || compactSidebarPopoverLockedRef.current) {
+        return
+      }
+
+      const frame = compactSidebarHoverFrameRef.current
+      if (!frame) {
+        scheduleCompactSidebarClose(80)
+        return
+      }
+
+      const bounds = frame.getBoundingClientRect()
+      const pointerInsideFrame =
+        event.clientX >= bounds.left && event.clientX <= bounds.right && event.clientY >= bounds.top && event.clientY <= bounds.bottom
+
+      if (pointerInsideFrame) {
+        clearCompactSidebarCloseTimer()
+      } else {
+        scheduleCompactSidebarClose(80)
       }
     }
 
@@ -172,7 +219,7 @@ function App() {
       window.removeEventListener('mousemove', onMouseMove)
       window.removeEventListener('blur', onWindowBlur)
     }
-  }, [compactSidebar])
+  }, [compactSidebar, compactSidebarRevealed])
 
   useEffect(() => {
     const onSidebarPopoverLock = (event: Event) => {
@@ -482,7 +529,6 @@ function App() {
       activeSpaceId={state.activeSpaceId}
       compactMode={compactSidebar}
       showShortcutHints={isCtrlHeld}
-      onToggleCompactMode={(value: boolean) => dispatch({ type: 'set-compact-sidebar', value })}
       onActivateSpace={(spaceId: string) => dispatch({ type: 'set-active-space', spaceId })}
       onAddSpaceFromFolder={addSpaceFromFolder}
       onAddEmptySpace={addEmptySpace}
@@ -549,61 +595,46 @@ function App() {
       {compactSidebar ? (
         <div className="pointer-events-none absolute inset-0 z-[70]">
           <div
-            ref={compactSidebarHoverFrameRef}
-            className={`pointer-events-auto absolute inset-y-0 left-0 ${compactSidebarRevealed ? 'w-[312px]' : 'w-8'}`}
-            onContextMenuCapture={() => {
-              if (compactSidebarCloseTimerRef.current !== null) {
-                window.clearTimeout(compactSidebarCloseTimerRef.current)
-                compactSidebarCloseTimerRef.current = null
-              }
-              setCompactSidebarRevealed(true)
-            }}
+            className="pointer-events-auto absolute inset-y-0 left-0 w-8"
             onPointerEnter={() => {
-              if (compactSidebarCloseTimerRef.current !== null) {
-                window.clearTimeout(compactSidebarCloseTimerRef.current)
-                compactSidebarCloseTimerRef.current = null
-              }
+              clearCompactSidebarCloseTimer()
               setCompactSidebarRevealed(true)
             }}
             onPointerMove={(event) => {
               compactSidebarPointerRef.current = { x: event.clientX, y: event.clientY }
-              if (compactSidebarCloseTimerRef.current !== null) {
-                window.clearTimeout(compactSidebarCloseTimerRef.current)
-                compactSidebarCloseTimerRef.current = null
+              clearCompactSidebarCloseTimer()
+              setCompactSidebarRevealed(true)
+            }}
+          />
+          <div
+            ref={compactSidebarHoverFrameRef}
+            className={`absolute inset-y-0 left-0 pl-3 pr-2 py-3 transition-transform duration-180 ${
+              compactSidebarRevealed ? 'pointer-events-auto translate-x-0' : 'pointer-events-none -translate-x-full'
+            }`}
+            onMouseDownCapture={(event) => {
+              const target = event.target instanceof Element ? event.target : null
+              if (event.button === 0 && !target?.closest('[data-space-menu-area="true"]')) {
+                window.dispatchEvent(new Event('argent:sidebar-dismiss-menus'))
               }
+            }}
+            onContextMenuCapture={(event) => {
+              event.preventDefault()
+              clearCompactSidebarCloseTimer()
+              setCompactSidebarRevealed(true)
+            }}
+            onPointerEnter={() => {
+              clearCompactSidebarCloseTimer()
+              setCompactSidebarRevealed(true)
+            }}
+            onPointerMove={(event) => {
+              compactSidebarPointerRef.current = { x: event.clientX, y: event.clientY }
+              clearCompactSidebarCloseTimer()
             }}
             onPointerLeave={() => {
-              if (compactSidebarPopoverLocked) {
-                return
-              }
-              if (compactSidebarCloseTimerRef.current !== null) {
-                window.clearTimeout(compactSidebarCloseTimerRef.current)
-              }
-              compactSidebarCloseTimerRef.current = window.setTimeout(() => {
-                const frame = compactSidebarHoverFrameRef.current
-                if (frame) {
-                  const bounds = frame.getBoundingClientRect()
-                  const { x, y } = compactSidebarPointerRef.current
-                  const pointerInsideFrame = x >= bounds.left && x <= bounds.right && y >= bounds.top && y <= bounds.bottom
-                  if (pointerInsideFrame) {
-                    compactSidebarCloseTimerRef.current = null
-                    setCompactSidebarRevealed(true)
-                    return
-                  }
-                }
-                setCompactSidebarRevealed(false)
-                compactSidebarCloseTimerRef.current = null
-              }, 140)
+              scheduleCompactSidebarClose(140)
             }}
           >
-            <div className="absolute inset-y-0 left-0 w-8" />
-            <div
-              className={`absolute inset-y-0 left-0 pl-3 pr-2 py-3 transition-transform duration-180 ${
-                compactSidebarRevealed ? 'pointer-events-auto translate-x-0' : 'pointer-events-none -translate-x-full'
-              }`}
-            >
-              {sidebar}
-            </div>
+            {sidebar}
           </div>
         </div>
       ) : null}
@@ -611,10 +642,12 @@ function App() {
       <CommandPalette
         spaces={state.spaces}
         activeSpaceId={state.activeSpaceId}
+        compactSidebar={compactSidebar}
         onCreateTab={createTabFromPalette}
         onSelectTab={selectWorkspaceTab}
         onAddSpaceFromFolder={addSpaceFromFolder}
         onAddEmptySpace={addEmptySpace}
+        onSetCompactMode={(value: boolean) => dispatch({ type: 'set-compact-sidebar', value })}
       />
     </main>
   )

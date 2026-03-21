@@ -8,7 +8,6 @@ type Props = {
   activeSpaceId: string | null
   compactMode: boolean
   showShortcutHints: boolean
-  onToggleCompactMode: (value: boolean) => void
   onActivateSpace: (spaceId: string) => void
   onAddSpaceFromFolder: () => Promise<boolean>
   onAddEmptySpace: () => Promise<boolean>
@@ -390,7 +389,6 @@ export function SpaceSidebar({
   activeSpaceId,
   compactMode,
   showShortcutHints,
-  onToggleCompactMode,
   onActivateSpace,
   onAddSpaceFromFolder,
   onAddEmptySpace,
@@ -415,7 +413,6 @@ export function SpaceSidebar({
   const [cloneRepoError, setCloneRepoError] = useState<string | null>(null)
   const [cloneRepoBusy, setCloneRepoBusy] = useState(false)
   const [cloneMode, setCloneMode] = useState(false)
-  const [sidebarMenu, setSidebarMenu] = useState<{ x: number; y: number } | null>(null)
   const [cloneParentDir, setCloneParentDir] = useState<string | null>(null)
   const [cloneAuthRequired, setCloneAuthRequired] = useState(false)
   const [cloneUsername, setCloneUsername] = useState('')
@@ -424,13 +421,12 @@ export function SpaceSidebar({
   const visibleSpaceMenu = spaceMenu && existingSpaceIds.has(spaceMenu.spaceId) ? spaceMenu : null
   const visibleSpaceMenuSpace = visibleSpaceMenu ? spaces.find((entry) => entry.id === visibleSpaceMenu.spaceId) ?? null : null
   const visibleEditingSpace = editingSpace && existingSpaceIds.has(editingSpace.spaceId) ? editingSpace : null
-  const hasOpenPopover = Boolean(visibleSpaceMenu || addSpaceMenu || sidebarMenu || cloneMode)
+  const hasOpenPopover = Boolean(visibleSpaceMenu || addSpaceMenu || cloneMode)
 
   const sidebarRef = useRef<HTMLElement | null>(null)
   const addSpaceButtonRef = useRef<HTMLButtonElement | null>(null)
   const spaceMenuRef = useRef<HTMLDivElement | null>(null)
   const addSpaceMenuRef = useRef<HTMLDivElement | null>(null)
-  const sidebarMenuRef = useRef<HTMLDivElement | null>(null)
   const windowDragRef = useRef<{ pointerStartX: number; pointerStartY: number; windowStartX: number; windowStartY: number } | null>(null)
 
   useEffect(() => {
@@ -442,15 +438,11 @@ export function SpaceSidebar({
       if (addSpaceMenuRef.current && target && addSpaceMenuRef.current.contains(target)) {
         return
       }
-      if (sidebarMenuRef.current && target && sidebarMenuRef.current.contains(target)) {
-        return
-      }
       if (addSpaceButtonRef.current && target && addSpaceButtonRef.current.contains(target)) {
         return
       }
       setSpaceMenu(null)
       setAddSpaceMenu(null)
-      setSidebarMenu(null)
       setCloneMode(false)
       setCloneRepoError(null)
       setCloneAuthRequired(false)
@@ -462,6 +454,21 @@ export function SpaceSidebar({
     return () => {
       document.removeEventListener('mousedown', closeWhenOutside, true)
       document.removeEventListener('contextmenu', closeWhenOutside, true)
+    }
+  }, [])
+
+  useEffect(() => {
+    const dismissMenus = () => {
+      setSpaceMenu(null)
+      setAddSpaceMenu(null)
+      setCloneMode(false)
+      setCloneRepoError(null)
+      setCloneAuthRequired(false)
+    }
+
+    window.addEventListener('argent:sidebar-dismiss-menus', dismissMenus)
+    return () => {
+      window.removeEventListener('argent:sidebar-dismiss-menus', dismissMenus)
     }
   }, [])
 
@@ -567,7 +574,20 @@ export function SpaceSidebar({
   function handleSidebarMouseDown(event: React.MouseEvent<HTMLElement>) {
     signalUiInteraction()
 
-    if (event.button !== 0 || !canStartWindowDrag(event.target)) {
+    const target = event.target as Node | null
+    const clickedInsideMenu =
+      (spaceMenuRef.current && target && spaceMenuRef.current.contains(target)) ||
+      (addSpaceMenuRef.current && target && addSpaceMenuRef.current.contains(target))
+
+    if (event.button === 0 && !clickedInsideMenu) {
+      setSpaceMenu(null)
+      setAddSpaceMenu(null)
+      setCloneMode(false)
+      setCloneRepoError(null)
+      setCloneAuthRequired(false)
+    }
+
+    if (event.button !== 0 || clickedInsideMenu || !canStartWindowDrag(event.target)) {
       return
     }
 
@@ -631,7 +651,6 @@ export function SpaceSidebar({
   }
 
   function toggleAddSpaceMenu() {
-    setSidebarMenu(null)
     if (addSpaceMenu) {
       setAddSpaceMenu(null)
       setCloneMode(false)
@@ -656,20 +675,6 @@ export function SpaceSidebar({
     setCloneParentDir(null)
     setCloneUsername('')
     setClonePasswordOrToken('')
-  }
-
-  function openSidebarMenu(event: React.MouseEvent<HTMLElement>) {
-    const sidebarRect = sidebarRef.current?.getBoundingClientRect()
-    if (!sidebarRect) {
-      return
-    }
-    const menuWidth = 188
-    const menuHeight = 42
-    const x = clamp(event.clientX - sidebarRect.left, 6, sidebarRect.width - menuWidth - 6)
-    const y = clamp(event.clientY - sidebarRect.top, 6, sidebarRect.height - menuHeight - 6)
-    setSidebarMenu({ x, y })
-    setAddSpaceMenu(null)
-    setSpaceMenu(null)
   }
 
   async function handleCloneRepoSubmit(urlOverride?: string) {
@@ -733,7 +738,9 @@ export function SpaceSidebar({
   return (
     <aside
       ref={sidebarRef}
-      className="drag-region h-full w-[292px] flex-shrink-0 flex flex-col rounded-xl border border-white/8 bg-[#1a1a1a] pt-3 pb-3 px-3 gap-3 shadow-[0_18px_48px_rgba(0,0,0,0.45)] relative"
+      className={`drag-region h-full w-[292px] flex-shrink-0 flex flex-col pt-3 pb-3 px-3 gap-3 relative ${
+        compactMode ? 'rounded-xl border border-white/8 bg-[#1a1a1a] shadow-[0_18px_48px_rgba(0,0,0,0.45)]' : 'bg-black/26 backdrop-blur-2xl'
+      }`}
       onMouseDownCapture={handleSidebarMouseDown}
       onContextMenuCapture={signalUiInteraction}
       onContextMenu={(event) => {
@@ -742,7 +749,6 @@ export function SpaceSidebar({
           return
         }
         event.preventDefault()
-        openSidebarMenu(event)
       }}
     >
       <div className="no-drag-region flex items-center justify-between px-2">
@@ -759,6 +765,7 @@ export function SpaceSidebar({
       {addSpaceMenu ? (
         <div
           ref={addSpaceMenuRef}
+          data-space-menu-area="true"
           className={`no-drag-region absolute z-50 bg-[#141414]/90 backdrop-blur-xl border border-white/5 rounded-md shadow-2xl py-1.5 text-[12px] text-[#a3a3a3] ${cloneMode ? 'w-64' : 'w-48'}`}
           style={{
             right: 6,
@@ -1247,28 +1254,10 @@ export function SpaceSidebar({
         })}
       </div>
 
-      {sidebarMenu ? (
-        <div
-          ref={sidebarMenuRef}
-          data-space-menu-area="true"
-          className="no-drag-region absolute z-50 w-44 rounded-md border border-white/5 bg-[#141414]/90 py-1.5 text-[12px] text-[#a3a3a3] shadow-2xl backdrop-blur-xl"
-          style={{ left: sidebarMenu.x, top: sidebarMenu.y }}
-        >
-          <button
-            className="w-full text-left px-3 py-1.5 transition-colors hover:bg-white/10 hover:text-[#d4d4d4]"
-            onClick={() => {
-              onToggleCompactMode(!compactMode)
-              setSidebarMenu(null)
-            }}
-          >
-            {compactMode ? 'Disable Compact Mode' : 'Enable Compact Mode'}
-          </button>
-        </div>
-      ) : null}
-
       {visibleSpaceMenu ? (
         <div
           ref={spaceMenuRef}
+          data-space-menu-area="true"
           className="no-drag-region absolute z-50 bg-[#141414]/90 backdrop-blur-xl border border-white/5 rounded-md shadow-2xl py-1.5 w-48 text-[12px] text-[#a3a3a3]"
           style={{ left: visibleSpaceMenu.x, top: visibleSpaceMenu.y }}
         >
