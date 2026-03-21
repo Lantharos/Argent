@@ -127,6 +127,7 @@ function App() {
   const [bridgeReady, setBridgeReady] = useState(true)
   const [providers, setProviders] = useState<ProviderConfig[]>([])
   const [homeDirectory, setHomeDirectory] = useState('')
+  const [updateReady, setUpdateReady] = useState<{ version: string | null } | null>(null)
   const [isCtrlHeld, setIsCtrlHeld] = useState(false)
   const [compactSidebarRevealed, setCompactSidebarRevealed] = useState(false)
   const [compactSidebarPopoverLocked, setCompactSidebarPopoverLocked] = useState(false)
@@ -257,18 +258,26 @@ function App() {
         return
       }
 
-      const [snapshot, providerList, homePath] = await Promise.all([
+      const [snapshot, providerList, homePath, pendingUpdate] = await Promise.all([
         bridge.app.loadState(),
         bridge.providers.list(),
         bridge.app.getHomeDirectory(),
+        bridge.app.getUpdateReady(),
       ])
       dispatch({ type: 'replace', value: snapshot as AppSnapshot })
       setProviders(providerList)
       setHomeDirectory(homePath)
+      setUpdateReady(pendingUpdate)
       setLoaded(true)
     }
 
     void boot()
+  }, [])
+
+  useEffect(() => {
+    return window.argent.app.onUpdateReady((payload) => {
+      setUpdateReady(payload)
+    })
   }, [])
 
   useEffect(() => {
@@ -567,6 +576,8 @@ function App() {
           }),
         })
       }}
+      updateReady={updateReady}
+      onRestartToUpdate={() => window.argent.app.restartToUpdate()}
     />
   )
 

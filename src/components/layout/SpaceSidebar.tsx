@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Ellipsis, Loader2 } from 'lucide-react'
+import { Ellipsis, Loader2, RotateCcw } from 'lucide-react'
 import type { AppSpace, AppTab, AppTabGroup, AppTabSplitNode, AppTabType } from '../../types/argent'
 import { normalizeProviderKey, ProviderGlyph } from '../tabs/providerIcon'
 
@@ -20,6 +20,8 @@ type Props = {
   onCloseTab: (spaceId: string, tabId: string) => void
   onAddTab: (spaceId: string, type: AppTabType) => void
   onRenameTab: (spaceId: string, tabId: string, title: string) => void
+  updateReady: { version: string | null } | null
+  onRestartToUpdate: () => Promise<boolean>
 }
 
 type SpaceMenuState = {
@@ -401,6 +403,8 @@ export function SpaceSidebar({
   onCloseTab,
   onAddTab,
   onRenameTab,
+  updateReady,
+  onRestartToUpdate,
 }: Props) {
   const [collapsedSpaceIds, setCollapsedSpaceIds] = useState<string[]>([])
   const [dragTabPayload, setDragTabPayload] = useState<{ spaceId: string; tabId: string } | null>(null)
@@ -892,7 +896,7 @@ export function SpaceSidebar({
         <div className="text-[12px] font-medium text-[#7e7e7e] px-1">Projects</div>
       </div>
 
-      <div className="drag-region flex flex-col gap-0.5 overflow-auto pr-1">
+      <div className="drag-region flex-1 min-h-0 flex flex-col gap-0.5 overflow-auto pr-1">
         {spaces.map((space, spaceIndex) => {
           const isActive = space.id === activeSpaceId
           const isCollapsed = existingSpaceIds.has(space.id) && collapsedSpaceIds.includes(space.id)
@@ -1253,6 +1257,31 @@ export function SpaceSidebar({
           )
         })}
       </div>
+
+      {updateReady ? (
+        <div className="no-drag-region mt-2 px-1">
+          <button
+            className="w-full rounded-xl border border-amber-200/12 bg-amber-200/[0.12] px-3 py-2.5 text-left transition-colors hover:bg-amber-200/[0.16]"
+            onClick={() => {
+              void onRestartToUpdate()
+            }}
+          >
+            <span className="flex items-start gap-2.5">
+              <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-amber-100/20 text-amber-100/90">
+                <RotateCcw className="h-3.5 w-3.5" />
+              </span>
+              <span className="min-w-0">
+                <span className="block text-[13px] font-medium text-amber-50/95">
+                  Argent is ready to update!
+                </span>
+                <span className="mt-0.5 block text-[11.5px] text-amber-100/70">
+                  Click to restart{updateReady.version ? ` · v${updateReady.version}` : ''}
+                </span>
+              </span>
+            </span>
+          </button>
+        </div>
+      ) : null}
 
       {visibleSpaceMenu ? (
         <div

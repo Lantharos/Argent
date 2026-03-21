@@ -50,7 +50,11 @@ contextBridge.exposeInMainWorld('argent', {
     chooseFolder: () => ipcRenderer.invoke('app:choose-folder'),
     openInExplorer: (targetPath) => ipcRenderer.invoke('app:open-in-explorer', targetPath),
     getHomeDirectory: () => ipcRenderer.invoke('app:get-home-directory'),
+    getUpdateReady: () => ipcRenderer.invoke('app:get-update-ready'),
+    restartToUpdate: () => ipcRenderer.invoke('app:restart-to-update'),
+    triggerTestUpdateReady: () => ipcRenderer.invoke('app:trigger-test-update-ready'),
     onOpenCommandPalette: (callback) => on('app:open-command-palette', callback),
+    onUpdateReady: (callback) => on('app:update-ready', callback),
   },
   window: {
     minimize: () => ipcRenderer.invoke('window:minimize'),

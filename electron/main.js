@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, screen, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, screen, shell } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -40,9 +40,17 @@ let windowRef = null
 let terminalManager = null
 let languageServerManager = null
 const activeAIStreams = new Map()
+let updateReadyPayload = null
 const DEFAULT_WINDOW_WIDTH = 1400
 const DEFAULT_WINDOW_HEIGHT = 900
 const AUTO_UPDATE_INTERVAL_MS = 6 * 60 * 60 * 1000
+
+function emitUpdateReadyToRenderer(payload) {
+  if (!windowRef || windowRef.isDestroyed()) {
+    return
+  }
+  windowRef.webContents.send('app:update-ready', payload)
+}
 
 function getWindowsBuildNumber() {
   if (process.platform !== 'win32') {
@@ -78,24 +86,11 @@ function setupAutoUpdater() {
     console.error('Auto-updater error:', error)
   })
 
-  autoUpdater.on('update-downloaded', async info => {
-    if (!windowRef || windowRef.isDestroyed()) {
-      return
+  autoUpdater.on('update-downloaded', info => {
+    updateReadyPayload = {
+      version: typeof info?.version === 'string' && info.version.length > 0 ? info.version : null,
     }
-
-    const { response } = await dialog.showMessageBox(windowRef, {
-      type: 'info',
-      buttons: ['Restart now', 'Later'],
-      defaultId: 0,
-      cancelId: 1,
-      title: 'Update ready',
-      message: 'A new Argent update is ready to install.',
-      detail: `Version ${info.version} has been downloaded and will be applied after restart.`,
-    })
-
-    if (response === 0) {
-      autoUpdater.quitAndInstall()
-    }
+    emitUpdateReadyToRenderer(updateReadyPayload)
   })
 
   setTimeout(() => {
@@ -323,6 +318,22 @@ function setupIpc() {
   })
 
   ipcMain.handle('app:get-home-directory', () => app.getPath('home'))
+  ipcMain.handle('app:get-update-ready', () => updateReadyPayload)
+  ipcMain.handle('app:restart-to-update', () => {
+    if (!updateReadyPayload) {
+      return false
+    }
+
+    autoUpdater.quitAndInstall()
+    return true
+  })
+  ipcMain.handle('app:trigger-test-update-ready', () => {
+    updateReadyPayload = {
+      version: 'test-build',
+    }
+    emitUpdateReadyToRenderer(updateReadyPayload)
+    return updateReadyPayload
+  })
 
   ipcMain.handle('providers:list', () => listProviders())
 

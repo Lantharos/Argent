@@ -198,7 +198,11 @@ declare global {
         chooseFolder: () => Promise<string | null>
         openInExplorer: (targetPath: string) => Promise<boolean>
         getHomeDirectory: () => Promise<string>
+        getUpdateReady: () => Promise<{ version: string | null } | null>
+        restartToUpdate: () => Promise<boolean>
+        triggerTestUpdateReady: () => Promise<{ version: string | null } | null>
         onOpenCommandPalette: (callback: () => void) => () => void
+        onUpdateReady: (callback: (payload: { version: string | null }) => void) => () => void
       }
       window: {
         minimize: () => Promise<boolean>
