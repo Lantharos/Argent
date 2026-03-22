@@ -1013,7 +1013,22 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
           content: `${existingMessage.content}${delta}`,
         }
       } else {
-        messages.push({ role: 'assistant', content: delta })
+        const lastMessage = messages.at(-1)
+        const lastIsMetaLine =
+          lastMessage?.role === 'assistant' &&
+          typeof lastMessage.content === 'string' &&
+          (lastMessage.content.startsWith('[[tool]]') ||
+            lastMessage.content.startsWith('[[thought]]') ||
+            lastMessage.content.startsWith('[[plan]]'))
+
+        if (lastMessage?.role === 'assistant' && !lastIsMetaLine) {
+          messages[messages.length - 1] = {
+            ...lastMessage,
+            content: `${lastMessage.content}${delta}`,
+          }
+        } else {
+          messages.push({ role: 'assistant', content: delta })
+        }
         activeAssistantMessageIndexRef.current = messages.length - 1
       }
 
@@ -1154,6 +1169,56 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
           {children}
         </li>
       ),
+      table: ({ children, ...props }) => (
+        <table className="my-3 w-full border-collapse overflow-x-auto block" {...props}>
+          {children}
+        </table>
+      ),
+      thead: ({ children, ...props }) => (
+        <thead className="bg-white/[0.03]" {...props}>
+          {children}
+        </thead>
+      ),
+      tbody: ({ children, ...props }) => (
+        <tbody className="divide-y divide-white/[0.1]" {...props}>
+          {children}
+        </tbody>
+      ),
+      tr: ({ children, ...props }) => (
+        <tr className="divide-x divide-white/[0.1]" {...props}>
+          {children}
+        </tr>
+      ),
+      th: ({ children, ...props }) => (
+        <th className="border border-white/20 px-3 py-1.5 text-left text-[12px] font-medium text-[#d0d0d0]" {...props}>
+          {children}
+        </th>
+      ),
+      td: ({ children, ...props }) => (
+        <td className="border border-white/15 px-3 py-1.5 text-[13px] text-[#c0c0c0]" {...props}>
+          {children}
+        </td>
+      ),
+      code: ({ children, className, ...props }) => {
+        const isInline = !className
+        if (isInline) {
+          return (
+            <code className="rounded-md bg-white/[0.08] px-1.5 py-0.5 font-mono text-[13px] text-[#e0e0e0]" {...props}>
+              {children}
+            </code>
+          )
+        }
+        return (
+          <code className={className} {...props}>
+            {children}
+          </code>
+        )
+      },
+      pre: ({ children, ...props }) => (
+        <pre className="my-3 overflow-x-auto rounded-xl border border-white/10 bg-[#111111]/90 px-4 py-3 font-mono text-[13px] leading-6 text-[#d0d0d0]" {...props}>
+          {children}
+        </pre>
+      ),
     }),
     [],
   )
@@ -1186,6 +1251,31 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
       }
 
       if (event.type === 'text-delta') {
+        const pendingThought = pendingThoughtTextRef.current
+        if (pendingThought) {
+          if (thoughtFlushTimerRef.current !== null) {
+            window.clearTimeout(thoughtFlushTimerRef.current)
+            thoughtFlushTimerRef.current = null
+          }
+          const thoughtIdx = activeThoughtMessageIndexRef.current
+          if (typeof thoughtIdx === 'number') {
+            updateTab((current) => {
+              const messages = [...current.messages]
+              if (thoughtIdx >= 0 && thoughtIdx < messages.length && messages[thoughtIdx].role === 'assistant') {
+                const existingThought = parseThoughtMessage(messages[thoughtIdx].content)
+                if (typeof existingThought === 'string') {
+                  messages[thoughtIdx] = {
+                    ...messages[thoughtIdx],
+                    content: formatThoughtMessage(`${existingThought}${pendingThought}`),
+                  }
+                }
+              }
+              return { ...current, messages }
+            })
+          }
+          pendingThoughtTextRef.current = ''
+          setIsThoughtFlushActive(false)
+        }
         activeThoughtMessageIndexRef.current = null
         shouldStartNewThoughtBlockRef.current = false
         enqueueAssistantDelta(event.delta)
@@ -1213,8 +1303,54 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
           shouldStartNewThoughtBlockRef.current = true
         }
 
+        const pendingAssistant = pendingAssistantTextRef.current
+        if (pendingAssistant) {
+          clearStreamBuffer(pendingAssistantTextRef, flushTimerRef)
+          setIsAssistantFlushActive(false)
+        }
+
+        const pendingThought = pendingThoughtTextRef.current
+        if (pendingThought) {
+          if (thoughtFlushTimerRef.current !== null) {
+            window.clearTimeout(thoughtFlushTimerRef.current)
+            thoughtFlushTimerRef.current = null
+          }
+        }
+
         updateTab((current) => {
           const messages = [...current.messages]
+
+          if (pendingAssistant && typeof activeAssistantMessageIndexRef.current === 'number') {
+            const idx = activeAssistantMessageIndexRef.current
+            if (idx >= 0 && idx < messages.length && messages[idx].role === 'assistant') {
+              const isMetaLine = messages[idx].content.startsWith('[[tool]]') ||
+                messages[idx].content.startsWith('[[thought]]') ||
+                messages[idx].content.startsWith('[[plan]]')
+              if (!isMetaLine) {
+                messages[idx] = {
+                  ...messages[idx],
+                  content: `${messages[idx].content}${pendingAssistant}`,
+                }
+              }
+            }
+          }
+
+          if (pendingThought && typeof activeThoughtMessageIndexRef.current === 'number') {
+            const thoughtIdx = activeThoughtMessageIndexRef.current
+            if (thoughtIdx >= 0 && thoughtIdx < messages.length && messages[thoughtIdx].role === 'assistant') {
+              const existingThought = parseThoughtMessage(messages[thoughtIdx].content)
+              if (typeof existingThought === 'string') {
+                messages[thoughtIdx] = {
+                  ...messages[thoughtIdx],
+                  content: formatThoughtMessage(`${existingThought}${pendingThought}`),
+                }
+              }
+            }
+            activeThoughtMessageIndexRef.current = null
+            pendingThoughtTextRef.current = ''
+            setIsThoughtFlushActive(false)
+          }
+
           const existingIndex = toolMessageIndexByIdRef.current[toolId]
           const content = formatToolMessage(event.title, event.status, event.kind || 'other', event.detail)
 
@@ -1229,6 +1365,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
               content,
             })
             toolMessageIndexByIdRef.current[toolId] = messages.length - 1
+            activeAssistantMessageIndexRef.current = null
           }
 
           return {

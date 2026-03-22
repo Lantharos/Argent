@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { Terminal } from 'xterm'
 import { FitAddon } from 'xterm-addon-fit'
+import { ClipboardAddon } from '@xterm/addon-clipboard'
 import 'xterm/css/xterm.css'
 import type { TerminalTabData } from '../../types/argent'
 
@@ -131,6 +132,7 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
   const lastReportedTitleRef = useRef(sanitizeTerminalTitle(tab.title || DEFAULT_TERMINAL_TAB_TITLE))
   const webglAddonRef = useRef<{ dispose: () => void; clearTextureAtlas?: () => void } | null>(null)
   const webglContextLossDisposeRef = useRef<{ dispose: () => void } | null>(null)
+  const clipboardAddonRef = useRef<ClipboardAddon | null>(null)
 
   const alignTerminalViewport = useCallback(() => {
     const container = containerRef.current
@@ -274,6 +276,10 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
     const fitAddon = new FitAddon()
     terminal.loadAddon(fitAddon)
 
+    const clipboardAddon = new ClipboardAddon()
+    terminal.loadAddon(clipboardAddon)
+    clipboardAddonRef.current = clipboardAddon
+
     if (containerRef.current) {
       alignTerminalViewport()
       terminal.open(containerRef.current)
@@ -351,6 +357,8 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
       webglContextLossDisposeRef.current = null
       webglAddonRef.current?.dispose()
       webglAddonRef.current = null
+      clipboardAddonRef.current?.dispose()
+      clipboardAddonRef.current = null
       titleDispose.dispose()
       fitRef.current = null
       termRef.current = null
