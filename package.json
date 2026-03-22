@@ -1,7 +1,7 @@
 {
   "name": "argent",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Argent is a desktop coding workspace with AI chat, editor, terminal, browser, and git tools.",
   "author": {
     "name": "Lantharos",
