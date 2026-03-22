@@ -553,6 +553,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
   const copiedResetTimerRef = useRef<number | null>(null)
   const composerRef = useRef<HTMLTextAreaElement | null>(null)
   const wasOpencodeInstalledRef = useRef(false)
+  const deferredTextDeltaRef = useRef<string | null>(null)
 
   useEffect(() => {
     tabRef.current = tab
@@ -1121,6 +1122,11 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
       const pending = pendingThoughtTextRef.current
       if (!pending) {
         setIsThoughtFlushActive(false)
+        const deferred = deferredTextDeltaRef.current
+        if (deferred !== null) {
+          deferredTextDeltaRef.current = null
+          enqueueAssistantDelta(deferred)
+        }
         return
       }
 
@@ -1133,10 +1139,16 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
         thoughtFlushTimerRef.current = window.setTimeout(flush, 16)
       } else {
         setIsThoughtFlushActive(false)
+        const deferred = deferredTextDeltaRef.current
+        if (deferred !== null) {
+          deferredTextDeltaRef.current = null
+          enqueueAssistantDelta(deferred)
+        }
       }
     }
 
     thoughtFlushTimerRef.current = window.setTimeout(flush, 16)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appendThoughtDelta])
 
   const enqueueThoughtDelta = useCallback((delta: string) => {
@@ -1251,34 +1263,14 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
       }
 
       if (event.type === 'text-delta') {
-        const pendingThought = pendingThoughtTextRef.current
-        if (pendingThought) {
-          if (thoughtFlushTimerRef.current !== null) {
-            window.clearTimeout(thoughtFlushTimerRef.current)
-            thoughtFlushTimerRef.current = null
-          }
-          const thoughtIdx = activeThoughtMessageIndexRef.current
-          if (typeof thoughtIdx === 'number') {
-            updateTab((current) => {
-              const messages = [...current.messages]
-              if (thoughtIdx >= 0 && thoughtIdx < messages.length && messages[thoughtIdx].role === 'assistant') {
-                const existingThought = parseThoughtMessage(messages[thoughtIdx].content)
-                if (typeof existingThought === 'string') {
-                  messages[thoughtIdx] = {
-                    ...messages[thoughtIdx],
-                    content: formatThoughtMessage(`${existingThought}${pendingThought}`),
-                  }
-                }
-              }
-              return { ...current, messages }
-            })
-          }
-          pendingThoughtTextRef.current = ''
-          setIsThoughtFlushActive(false)
-        }
         activeThoughtMessageIndexRef.current = null
         shouldStartNewThoughtBlockRef.current = false
-        enqueueAssistantDelta(event.delta)
+
+        if (thoughtFlushTimerRef.current !== null || pendingThoughtTextRef.current.length > 0) {
+          deferredTextDeltaRef.current = (deferredTextDeltaRef.current || '') + (event.delta || '')
+        } else {
+          enqueueAssistantDelta(event.delta)
+        }
         return
       }
 
@@ -1309,12 +1301,19 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
           setIsAssistantFlushActive(false)
         }
 
+        if (thoughtFlushTimerRef.current !== null) {
+          window.clearTimeout(thoughtFlushTimerRef.current)
+          thoughtFlushTimerRef.current = null
+        }
         const pendingThought = pendingThoughtTextRef.current
         if (pendingThought) {
-          if (thoughtFlushTimerRef.current !== null) {
-            window.clearTimeout(thoughtFlushTimerRef.current)
-            thoughtFlushTimerRef.current = null
-          }
+          pendingThoughtTextRef.current = ''
+          setIsThoughtFlushActive(false)
+        }
+
+        const deferredText = deferredTextDeltaRef.current
+        if (deferredText) {
+          deferredTextDeltaRef.current = null
         }
 
         updateTab((current) => {
@@ -1347,8 +1346,6 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
               }
             }
             activeThoughtMessageIndexRef.current = null
-            pendingThoughtTextRef.current = ''
-            setIsThoughtFlushActive(false)
           }
 
           const existingIndex = toolMessageIndexByIdRef.current[toolId]
@@ -1368,6 +1365,11 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
             activeAssistantMessageIndexRef.current = null
           }
 
+          if (deferredText) {
+            messages.push({ role: 'assistant', content: deferredText })
+            activeAssistantMessageIndexRef.current = messages.length - 1
+          }
+
           return {
             ...current,
             messages,
@@ -1383,6 +1385,7 @@ export function AITab({ tab, isActive = true, spaceKind = 'project', cwd, provid
         shouldStartNewThoughtBlockRef.current = false
         clearStreamBuffer(pendingThoughtTextRef, thoughtFlushTimerRef)
         setIsThoughtFlushActive(false)
+        deferredTextDeltaRef.current = null
         setLoading(false)
         const wasCancelled = /cancel|aborted/i.test(event.message)
 

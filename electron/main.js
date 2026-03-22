@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, screen, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, screen, shell } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -450,6 +450,14 @@ function setupIpc() {
 
   ipcMain.handle('fs:read-file', (_, filePath) => {
     return fs.readFileSync(filePath, 'utf8')
+  })
+
+  ipcMain.handle('fs:read-file-base64', (_, filePath) => {
+    try {
+      return fs.readFileSync(filePath).toString('base64')
+    } catch {
+      return null
+    }
   })
 
   ipcMain.handle('fs:save-file', (_, payload) => {

@@ -110,6 +110,7 @@ contextBridge.exposeInMainWorld('argent', {
   fs: {
     openFile: (cwd) => ipcRenderer.invoke('fs:open-file', cwd),
     readFile: (path) => ipcRenderer.invoke('fs:read-file', path),
+    readFileBase64: (path) => ipcRenderer.invoke('fs:read-file-base64', path),
     saveFile: (path, content) => ipcRenderer.invoke('fs:save-file', { path, content }),
     createFile: (path) => ipcRenderer.invoke('fs:create-file', path),
     createDir: (path) => ipcRenderer.invoke('fs:create-dir', path),

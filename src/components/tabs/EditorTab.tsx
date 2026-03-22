@@ -80,6 +80,49 @@ function getContextMenuHeight(node: ContextMenuNode) {
   return 192
 }
 
+const IMAGE_EXTENSIONS = new Set([
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.gif',
+  '.webp',
+  '.bmp',
+  '.svg',
+  '.ico',
+  '.tif',
+  '.tiff',
+  '.avif',
+])
+
+function isImageFilePath(filePath: string | null | undefined) {
+  if (!filePath) {
+    return false
+  }
+
+  const lowered = filePath.toLowerCase()
+  for (const extension of IMAGE_EXTENSIONS) {
+    if (lowered.endsWith(extension)) {
+      return true
+    }
+  }
+
+  return false
+}
+
+function getImageMimeType(filePath: string) {
+  const lowered = filePath.toLowerCase()
+  if (lowered.endsWith('.png')) return 'image/png'
+  if (lowered.endsWith('.jpg') || lowered.endsWith('.jpeg')) return 'image/jpeg'
+  if (lowered.endsWith('.gif')) return 'image/gif'
+  if (lowered.endsWith('.webp')) return 'image/webp'
+  if (lowered.endsWith('.bmp')) return 'image/bmp'
+  if (lowered.endsWith('.svg')) return 'image/svg+xml'
+  if (lowered.endsWith('.ico')) return 'image/x-icon'
+  if (lowered.endsWith('.tif') || lowered.endsWith('.tiff')) return 'image/tiff'
+  if (lowered.endsWith('.avif')) return 'image/avif'
+  return 'application/octet-stream'
+}
+
 function FileTreeItem({
   node,
   currentFilePath,
@@ -312,6 +355,8 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
   const [installMessage, setInstallMessage] = useState<string | null>(null)
   const [startingServer, setStartingServer] = useState(false)
   const [rootExpanded, setRootExpanded] = useState(true)
+  const [imageVersion, setImageVersion] = useState(0)
+  const [imageDataUrl, setImageDataUrl] = useState<string | null>(null)
 
   const isSidebarOpen = tab.sidebarOpen ?? true
   const fontSize = tab.fontSize ?? 14
@@ -323,12 +368,40 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
   }, [tab.filePath, tab.language])
   const languageLabel = useMemo(() => getLanguageLabel(languageId), [languageId])
   const languageConfig = useMemo(() => getLanguageConfig(languageId), [languageId])
+  const isImageFile = useMemo(() => isImageFilePath(tab.filePath), [tab.filePath])
+  const imageSrc = imageDataUrl
 
   useEffect(() => {
     currentFileRef.current = tab.filePath
     tabRef.current = tab
     onChangeRef.current = onChange
   }, [onChange, tab])
+
+  useEffect(() => {
+    if (!tab.filePath || !isImageFile) {
+      setImageDataUrl(null)
+      return
+    }
+
+    let disposed = false
+    const filePath = tab.filePath
+    const mimeType = getImageMimeType(filePath)
+
+    void window.argent.fs.readFileBase64(filePath).then((base64) => {
+      if (disposed) {
+        return
+      }
+      if (!base64) {
+        setImageDataUrl(null)
+        return
+      }
+      setImageDataUrl(`data:${mimeType};base64,${base64}`)
+    })
+
+    return () => {
+      disposed = true
+    }
+  }, [imageVersion, isImageFile, tab.filePath])
 
   useEffect(() => {
     if (!installMessage) {
@@ -385,6 +458,12 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
       }
 
       if (event.type === 'file-changed' && event.filePath === currentFileRef.current && tabRef.current.filePath) {
+        if (isImageFilePath(tabRef.current.filePath)) {
+          setImageVersion((value) => value + 1)
+          setExternalChangeNotice('Reloaded image preview.')
+          return
+        }
+
         if (tabRef.current.dirty) {
           setExternalChangeNotice('File changed outside the editor. Save or reopen to reconcile.')
           return
@@ -417,9 +496,11 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
   }, [])
 
   useEffect(() => {
-    if (!tab.filePath) {
+    if (!tab.filePath || isImageFile) {
       changeDisposableRef.current?.dispose()
       changeDisposableRef.current = null
+      setModel(null)
+      setServerStatus(null)
       return
     }
 
@@ -502,7 +583,7 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
       lspBridge.clearDocumentContext(filePath)
       releaseEditorModel(filePath)
     }
-  }, [cwd, languageConfig.lspLanguageId, languageConfig.support, languageId, tab.filePath])
+  }, [cwd, isImageFile, languageConfig.lspLanguageId, languageConfig.support, languageId, tab.filePath])
 
   useEffect(() => {
     if (!model || model.getValue() === tab.content) {
@@ -556,7 +637,7 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
       return
     }
 
-    const content = await window.argent.fs.readFile(node.path)
+    const content = isImageFilePath(node.path) ? '' : await window.argent.fs.readFile(node.path)
     onChange({
       ...tab,
       filePath: node.path,
@@ -572,7 +653,7 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
       return
     }
 
-    const content = await window.argent.fs.readFile(node.path)
+    const content = isImageFilePath(node.path) ? '' : await window.argent.fs.readFile(node.path)
     const title = node.name || node.path.split(/[/\\]/).at(-1) || 'Editor'
     const language = detectLanguageFromPath(node.path).id
 
@@ -602,7 +683,7 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
       return
     }
 
-    const content = await window.argent.fs.readFile(filePath)
+    const content = isImageFilePath(filePath) ? '' : await window.argent.fs.readFile(filePath)
     onChange({
       ...tab,
       filePath,
@@ -614,7 +695,7 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
   }
 
   const saveFile = useCallback(async () => {
-    if (!tab.filePath) {
+    if (!tab.filePath || isImageFilePath(tab.filePath)) {
       return
     }
 
@@ -1025,7 +1106,7 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
             Save
           </button>
           <span className="min-w-0 flex-1 truncate whitespace-nowrap text-[11px] text-[#666]">
-            {languageLabel} | {getStatusText(languageId, serverStatus)}
+            {isImageFile ? 'Image Preview | Read-only' : `${languageLabel} | ${getStatusText(languageId, serverStatus)}`}
           </span>
           {installSupported && serverStatus?.status === 'unavailable' ? (
             <button
@@ -1085,7 +1166,16 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
         ) : null}
 
         <div className="relative flex-1 overflow-hidden" style={{ fontSize: `${fontSize}px` }}>
-          {tab.filePath && model ? (
+          {tab.filePath && isImageFile && imageSrc ? (
+            <div className="grid h-full w-full place-items-center overflow-auto bg-[#0b0b0b]">
+              <img
+                src={imageSrc}
+                alt={tab.title || 'Image preview'}
+                draggable={false}
+                className="max-h-full max-w-full object-contain p-4"
+              />
+            </div>
+          ) : tab.filePath && model ? (
             <div className="absolute inset-0 h-full w-full [&_.monaco-editor]:!bg-transparent [&_.monaco-editor-background]:!bg-transparent">
               <MonacoEditorSurface model={model} fontSize={fontSize} onSave={handleSave} />
             </div>

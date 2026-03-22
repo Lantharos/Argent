@@ -285,6 +285,7 @@ declare global {
       fs: {
         openFile: (cwd: string | null) => Promise<string | null>
         readFile: (path: string) => Promise<string>
+        readFileBase64: (path: string) => Promise<string | null>
         saveFile: (path: string, content: string) => Promise<boolean>
         createFile: (path: string) => Promise<boolean>
         createDir: (path: string) => Promise<boolean>
