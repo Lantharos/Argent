@@ -345,6 +345,17 @@ function getStatusText(languageId: string, status: LspServerState | null) {
   return status.detail ? `${status.status}: ${status.detail}` : status.status
 }
 
+function getEmptyEditorTabState(tab: EditorTabData): EditorTabData {
+  return {
+    ...tab,
+    title: 'Editor',
+    filePath: null,
+    content: '',
+    language: 'plaintext',
+    dirty: false,
+  }
+}
+
 export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onOpenBrowserPreviewTab, onChange }: Props) {
   const [rootNodes, setRootNodes] = useState<FileNode[]>([])
   const [refreshCount, setRefreshCount] = useState(0)
@@ -564,25 +575,17 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onOpenBro
       }
 
       if (event.type === 'path-removed' && event.watchedPath === currentFileRef.current && tabRef.current.filePath) {
-        if (tabRef.current.dirty) {
-          setExternalChangeNotice('File was removed outside the editor. Save to recreate it or pick another file.')
-          return
-        }
-
         if (isImageFilePath(tabRef.current.filePath)) {
           setImageDataUrl(null)
         }
 
         suppressModelChangeRef.current = true
+        currentFileRef.current = null
         versionRef.current = 1
-        onChangeRef.current({
-          ...tabRef.current,
-          title: getPathBaseName(tabRef.current.filePath) || workspaceRootName,
-          content: '',
-          dirty: false,
-          language: detectLanguageFromPath(tabRef.current.filePath).id,
-        })
-        setExternalChangeNotice('File was removed outside the editor.')
+        setModel(null)
+        setServerStatus(null)
+        onChangeRef.current(getEmptyEditorTabState(tabRef.current))
+        setExternalChangeNotice('Selected file was deleted.')
       }
     })
 

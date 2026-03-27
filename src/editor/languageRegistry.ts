@@ -1,5 +1,6 @@
 import { ensureGdScriptRegistered } from './gdscript'
 import { ensureSvelteRegistered, ensureSvelteTokensProvider } from './svelte'
+import { ensureSnippetProvider } from './snippets'
 import type { EditorSupportKind } from './types'
 
 export type EditorLanguageConfig = {
@@ -268,7 +269,9 @@ export function detectLanguageFromPath(filePath: string | null | undefined): Edi
 }
 
 export async function ensureLanguageSupport(languageId: string | null | undefined) {
-  await getLanguageConfig(languageId).load()
+  const resolvedLanguageId = getLanguageConfig(languageId).id
+  await getLanguageConfig(resolvedLanguageId).load()
+  ensureSnippetProvider(resolvedLanguageId)
 }
 
 export function getLanguageLabel(languageId: string | null | undefined) {

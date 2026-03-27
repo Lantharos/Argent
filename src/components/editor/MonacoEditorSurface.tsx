@@ -43,6 +43,7 @@ export function MonacoEditorSurface({ model, fontSize, readOnly = false, onSave 
         strings: true,
         other: true,
       },
+      snippetSuggestions: 'top',
       suggestOnTriggerCharacters: true,
       fixedOverflowWidgets: false,
       bracketPairColorization: { enabled: true },

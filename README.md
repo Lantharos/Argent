@@ -92,6 +92,7 @@ The editor tab includes both file browsing and direct editing in the same surfac
 - open files in-place or in a new tab
 - drag and drop files between folders
 - context menu actions for cut, copy, paste, and delete
+- snippet templates in Monaco completion, including HTML document scaffolds and common language starters
 - right-click `.html` files to open them in a browser preview tab
 - `Ctrl+S` or `Cmd+S` to save
 - font scaling shortcuts for quicker readability changes
