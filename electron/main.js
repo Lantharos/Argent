@@ -338,7 +338,7 @@ function setupIpc() {
       return false
     }
 
-    autoUpdater.quitAndInstall()
+    autoUpdater.quitAndInstall(true, true)
     return true
   })
   ipcMain.handle('app:trigger-test-update-ready', () => {
