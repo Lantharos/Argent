@@ -1002,10 +1002,113 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
       tabIndex={-1}
       onKeyDown={handleKeyDown}
     >
+      <div className="flex min-w-0 flex-1 flex-col bg-transparent">
+        <header className="flex h-[36px] shrink-0 items-center gap-2 border-b border-white/5 bg-transparent px-3">
+          <button className="h-[22px] rounded border-none px-2.5 text-[11px] font-medium text-[#a3a3a3] transition-colors hover:bg-white/5 hover:text-[#d4d4d4]" onClick={openFile}>
+            Open
+          </button>
+          <button className="h-[22px] rounded border-none px-2.5 text-[11px] font-medium text-[#a3a3a3] transition-colors hover:bg-white/5 hover:text-[#d4d4d4] disabled:opacity-30 disabled:hover:bg-transparent" onClick={() => { void saveFile() }} disabled={!tab.filePath || !tab.dirty}>
+            Save
+          </button>
+          <span className="min-w-0 flex-1 truncate whitespace-nowrap text-[11px] text-[#666]">
+            {isImageFile ? 'Image Preview | Read-only' : `${languageLabel} | ${getStatusText(languageId, serverStatus)}`}
+          </span>
+          {installSupported && serverStatus?.status === 'unavailable' ? (
+            <button
+              className="ml-2 flex h-[22px] shrink-0 items-center gap-1 rounded border border-white/10 px-2.5 text-[11px] text-[#a3a3a3] transition-colors hover:bg-white/5 hover:text-white disabled:cursor-wait disabled:opacity-50"
+              onClick={() => { void handleInstallServer() }}
+              disabled={installingServer}
+              title={serverStatus?.install?.detail ?? serverStatus?.detail ?? undefined}
+            >
+              <Download size={11} />
+              {installingServer ? 'Installing...' : installLabel}
+            </button>
+          ) : null}
+          {canStartServer ? (
+            <button
+              className="ml-2 flex h-[22px] shrink-0 items-center gap-1 rounded border border-white/10 px-2.5 text-[11px] text-[#a3a3a3] transition-colors hover:bg-white/5 hover:text-white disabled:cursor-wait disabled:opacity-50"
+              onClick={() => { void handleStartServer() }}
+              disabled={startingServer}
+            >
+              <RotateCw size={11} />
+              {startingServer ? 'Starting...' : 'Start LSP'}
+            </button>
+          ) : null}
+          {workspaceInfo?.isGodotProject && languageId === 'gdscript' ? (
+            <>
+              <button
+                className="ml-auto flex h-[22px] items-center gap-1 rounded border border-white/10 px-2.5 text-[11px] text-[#a3a3a3] transition-colors hover:bg-white/5 hover:text-white"
+                onClick={() => { void handleLaunchGodotEditor() }}
+                title={workspaceInfo.godotExecutable ?? 'Launch Godot editor'}
+              >
+                <Puzzle size={11} />
+                Godot
+              </button>
+              <button
+                className="flex h-[22px] items-center gap-1 rounded border border-white/10 px-2.5 text-[11px] text-[#a3a3a3] transition-colors hover:bg-white/5 hover:text-white"
+                onClick={() => { void handleRunGodotProject() }}
+              >
+                <Play size={11} />
+                Run
+              </button>
+            </>
+          ) : (
+            <span className="ml-auto mr-1 overflow-hidden text-ellipsis whitespace-nowrap text-[11px] font-mono text-[#666]">
+              {tab.filePath ?? 'No file selected'}
+            </span>
+          )}
+          <div className="mx-1 h-3 w-[1px] bg-white/10" />
+          <button
+            className={`flex h-[22px] w-[22px] items-center justify-center rounded border-none transition-colors ${
+              isSidebarOpen ? 'bg-white/10 text-white' : 'cursor-pointer text-[#888] hover:bg-white/5 hover:text-[#d4d4d4]'
+            }`}
+            onClick={() => setSidebarOpen(!isSidebarOpen)}
+            title="Toggle Sidebar"
+          >
+            <PanelLeft size={13} className="scale-x-[-1]" />
+          </button>
+        </header>
+
+        {externalChangeNotice ? (
+          <div className="border-b border-amber-400/20 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200">
+            {externalChangeNotice}
+          </div>
+        ) : null}
+        {installMessage ? (
+          <div className="border-b border-blue-400/20 bg-blue-500/10 px-3 py-2 text-[11px] text-blue-200">
+            {installMessage}
+          </div>
+        ) : null}
+
+        <div className="relative flex-1 overflow-hidden" style={{ fontSize: `${fontSize}px` }}>
+          {tab.filePath && isImageFile && imageSrc ? (
+            <div className="grid h-full w-full place-items-center overflow-auto bg-[#0b0b0b]">
+              <img
+                src={imageSrc}
+                alt={tab.title || 'Image preview'}
+                draggable={false}
+                className="max-h-full max-w-full object-contain p-4"
+              />
+            </div>
+          ) : tab.filePath && model ? (
+            <div className="absolute inset-0 h-full w-full [&_.monaco-editor]:!bg-transparent [&_.monaco-editor-background]:!bg-transparent">
+              <MonacoEditorSurface model={model} fontSize={fontSize} onSave={handleSave} />
+            </div>
+          ) : (
+            <div className="grid h-full place-items-center text-center text-sm text-[#666]">
+              <div>
+                <p>Select a file from the sidebar to start editing.</p>
+                <p className="mt-2 text-[12px] text-[#555]">Languages and language servers load lazily when you open a matching file.</p>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
       {isSidebarOpen ? (
         <div
           ref={sidebarRef}
-          className="relative flex w-64 shrink-0 flex-col border-r border-white/5 bg-transparent"
+          className="relative flex w-64 shrink-0 flex-col border-l border-white/5 bg-transparent"
           onMouseDownCapture={(event) => {
             closeMenuIfOutside(event.target)
           }}
@@ -1162,109 +1265,6 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
           ) : null}
         </div>
       ) : null}
-
-      <div className="flex min-w-0 flex-1 flex-col bg-transparent">
-        <header className="flex h-[36px] shrink-0 items-center gap-2 border-b border-white/5 bg-transparent px-3">
-          <button
-            className={`flex h-[22px] w-[22px] items-center justify-center rounded border-none transition-colors ${
-              isSidebarOpen ? 'bg-white/10 text-white' : 'cursor-pointer text-[#888] hover:bg-white/5 hover:text-[#d4d4d4]'
-            }`}
-            onClick={() => setSidebarOpen(!isSidebarOpen)}
-            title="Toggle Sidebar"
-          >
-            <PanelLeft size={13} />
-          </button>
-          <div className="mx-1 h-3 w-[1px] bg-white/10" />
-          <button className="h-[22px] rounded border-none px-2.5 text-[11px] font-medium text-[#a3a3a3] transition-colors hover:bg-white/5 hover:text-[#d4d4d4]" onClick={openFile}>
-            Open
-          </button>
-          <button className="h-[22px] rounded border-none px-2.5 text-[11px] font-medium text-[#a3a3a3] transition-colors hover:bg-white/5 hover:text-[#d4d4d4] disabled:opacity-30 disabled:hover:bg-transparent" onClick={() => { void saveFile() }} disabled={!tab.filePath || !tab.dirty}>
-            Save
-          </button>
-          <span className="min-w-0 flex-1 truncate whitespace-nowrap text-[11px] text-[#666]">
-            {isImageFile ? 'Image Preview | Read-only' : `${languageLabel} | ${getStatusText(languageId, serverStatus)}`}
-          </span>
-          {installSupported && serverStatus?.status === 'unavailable' ? (
-            <button
-              className="ml-2 flex h-[22px] shrink-0 items-center gap-1 rounded border border-white/10 px-2.5 text-[11px] text-[#a3a3a3] transition-colors hover:bg-white/5 hover:text-white disabled:cursor-wait disabled:opacity-50"
-              onClick={() => { void handleInstallServer() }}
-              disabled={installingServer}
-              title={serverStatus?.install?.detail ?? serverStatus?.detail ?? undefined}
-            >
-              <Download size={11} />
-              {installingServer ? 'Installing...' : installLabel}
-            </button>
-          ) : null}
-          {canStartServer ? (
-            <button
-              className="ml-2 flex h-[22px] shrink-0 items-center gap-1 rounded border border-white/10 px-2.5 text-[11px] text-[#a3a3a3] transition-colors hover:bg-white/5 hover:text-white disabled:cursor-wait disabled:opacity-50"
-              onClick={() => { void handleStartServer() }}
-              disabled={startingServer}
-            >
-              <RotateCw size={11} />
-              {startingServer ? 'Starting...' : 'Start LSP'}
-            </button>
-          ) : null}
-          {workspaceInfo?.isGodotProject && languageId === 'gdscript' ? (
-            <>
-              <button
-                className="ml-auto flex h-[22px] items-center gap-1 rounded border border-white/10 px-2.5 text-[11px] text-[#a3a3a3] transition-colors hover:bg-white/5 hover:text-white"
-                onClick={() => { void handleLaunchGodotEditor() }}
-                title={workspaceInfo.godotExecutable ?? 'Launch Godot editor'}
-              >
-                <Puzzle size={11} />
-                Godot
-              </button>
-              <button
-                className="flex h-[22px] items-center gap-1 rounded border border-white/10 px-2.5 text-[11px] text-[#a3a3a3] transition-colors hover:bg-white/5 hover:text-white"
-                onClick={() => { void handleRunGodotProject() }}
-              >
-                <Play size={11} />
-                Run
-              </button>
-            </>
-          ) : (
-            <span className="ml-auto mr-1 overflow-hidden text-ellipsis whitespace-nowrap text-[11px] font-mono text-[#666]">
-              {tab.filePath ?? 'No file selected'}
-            </span>
-          )}
-        </header>
-
-        {externalChangeNotice ? (
-          <div className="border-b border-amber-400/20 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200">
-            {externalChangeNotice}
-          </div>
-        ) : null}
-        {installMessage ? (
-          <div className="border-b border-blue-400/20 bg-blue-500/10 px-3 py-2 text-[11px] text-blue-200">
-            {installMessage}
-          </div>
-        ) : null}
-
-        <div className="relative flex-1 overflow-hidden" style={{ fontSize: `${fontSize}px` }}>
-          {tab.filePath && isImageFile && imageSrc ? (
-            <div className="grid h-full w-full place-items-center overflow-auto bg-[#0b0b0b]">
-              <img
-                src={imageSrc}
-                alt={tab.title || 'Image preview'}
-                draggable={false}
-                className="max-h-full max-w-full object-contain p-4"
-              />
-            </div>
-          ) : tab.filePath && model ? (
-            <div className="absolute inset-0 h-full w-full [&_.monaco-editor]:!bg-transparent [&_.monaco-editor-background]:!bg-transparent">
-              <MonacoEditorSurface model={model} fontSize={fontSize} onSave={handleSave} />
-            </div>
-          ) : (
-            <div className="grid h-full place-items-center text-center text-sm text-[#666]">
-              <div>
-                <p>Select a file from the sidebar to start editing.</p>
-                <p className="mt-2 text-[12px] text-[#555]">Languages and language servers load lazily when you open a matching file.</p>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
     </section>
   )
 }
