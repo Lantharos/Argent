@@ -115,6 +115,7 @@ export type BrowserTabData = AppTabBase & {
   type: 'browser'
   url: string
   faviconUrl: string | null
+  previewFilePath?: string | null
 }
 
 export type TerminalTabData = AppTabBase & {
@@ -209,6 +210,9 @@ declare global {
         chooseFolder: () => Promise<string | null>
         openInExplorer: (targetPath: string) => Promise<boolean>
         getHomeDirectory: () => Promise<string>
+        readClipboardText: () => Promise<string>
+        writeClipboardText: (value: string) => Promise<boolean>
+        getPreviewUrl: (payload: { workspacePath: string; filePath: string }) => Promise<string>
         getUpdateReady: () => Promise<{ version: string | null } | null>
         restartToUpdate: () => Promise<boolean>
         triggerTestUpdateReady: () => Promise<{ version: string | null } | null>

@@ -13,6 +13,7 @@ type Props = {
   cwd: string
   isActive?: boolean
   onOpenInNewTab?: (payload: { filePath: string; title: string; content: string; language: string }) => void
+  onOpenBrowserPreviewTab?: (filePath: string) => Promise<void>
   onChange: (next: EditorTabData) => void
 }
 
@@ -77,6 +78,9 @@ function getContextMenuHeight(node: ContextMenuNode) {
   if (node.isDirectory) {
     return 260
   }
+  if (isHtmlFilePath(node.path)) {
+    return 226
+  }
   return 192
 }
 
@@ -121,6 +125,15 @@ function getImageMimeType(filePath: string) {
   if (lowered.endsWith('.tif') || lowered.endsWith('.tiff')) return 'image/tiff'
   if (lowered.endsWith('.avif')) return 'image/avif'
   return 'application/octet-stream'
+}
+
+function isHtmlFilePath(filePath: string | null | undefined) {
+  if (!filePath) {
+    return false
+  }
+
+  const lowered = filePath.toLowerCase()
+  return lowered.endsWith('.html') || lowered.endsWith('.htm')
 }
 
 function FileTreeItem({
@@ -332,7 +345,7 @@ function getStatusText(languageId: string, status: LspServerState | null) {
   return status.detail ? `${status.status}: ${status.detail}` : status.status
 }
 
-export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange }: Props) {
+export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onOpenBrowserPreviewTab, onChange }: Props) {
   const [rootNodes, setRootNodes] = useState<FileNode[]>([])
   const [refreshCount, setRefreshCount] = useState(0)
   const [model, setModel] = useState<MonacoEditor.ITextModel | null>(null)
@@ -351,6 +364,7 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
   const tabRef = useRef(tab)
   const onChangeRef = useRef(onChange)
   const changeDisposableRef = useRef<IDisposable | null>(null)
+  const pendingInternalSaveRef = useRef<{ filePath: string; expiresAt: number } | null>(null)
   const [installingServer, setInstallingServer] = useState(false)
   const [installMessage, setInstallMessage] = useState<string | null>(null)
   const [startingServer, setStartingServer] = useState(false)
@@ -369,6 +383,7 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
   const languageLabel = useMemo(() => getLanguageLabel(languageId), [languageId])
   const languageConfig = useMemo(() => getLanguageConfig(languageId), [languageId])
   const isImageFile = useMemo(() => isImageFilePath(tab.filePath), [tab.filePath])
+  const isHtmlFile = useMemo(() => isHtmlFilePath(tab.filePath), [tab.filePath])
   const imageSrc = imageDataUrl
   const workspaceRootName = useMemo(() => getPathBaseName(cwd), [cwd])
 
@@ -517,6 +532,16 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
         if (isImageFilePath(tabRef.current.filePath)) {
           setImageVersion((value) => value + 1)
           setExternalChangeNotice('Reloaded image preview.')
+          return
+        }
+
+        const pendingInternalSave = pendingInternalSaveRef.current
+        if (
+          pendingInternalSave
+          && pendingInternalSave.filePath === tabRef.current.filePath
+          && pendingInternalSave.expiresAt > Date.now()
+        ) {
+          pendingInternalSaveRef.current = null
           return
         }
 
@@ -772,11 +797,24 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
     })
   }
 
+  async function openBrowserPreview(filePath: string | null | undefined) {
+    if (!filePath || !isHtmlFilePath(filePath) || !onOpenBrowserPreviewTab) {
+      return
+    }
+
+    await onOpenBrowserPreviewTab(filePath)
+    setMenu(null)
+  }
+
   const saveFile = useCallback(async () => {
     if (!tab.filePath || isImageFilePath(tab.filePath)) {
       return
     }
 
+    pendingInternalSaveRef.current = {
+      filePath: tab.filePath,
+      expiresAt: Date.now() + 1500,
+    }
     await window.argent.fs.saveFile(tab.filePath, tab.content)
     setExternalChangeNotice(null)
     onChangeRef.current({ ...tabRef.current, dirty: false, language: languageId })
@@ -1010,6 +1048,11 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
           <button className="h-[22px] rounded border-none px-2.5 text-[11px] font-medium text-[#a3a3a3] transition-colors hover:bg-white/5 hover:text-[#d4d4d4] disabled:opacity-30 disabled:hover:bg-transparent" onClick={() => { void saveFile() }} disabled={!tab.filePath || !tab.dirty}>
             Save
           </button>
+          {isHtmlFile ? (
+            <button className="h-[22px] rounded border-none px-2.5 text-[11px] font-medium text-[#a3a3a3] transition-colors hover:bg-white/5 hover:text-[#d4d4d4]" onClick={() => { void openBrowserPreview(tab.filePath) }}>
+              Preview
+            </button>
+          ) : null}
           <span className="min-w-0 flex-1 truncate whitespace-nowrap text-[11px] text-[#666]">
             {isImageFile ? 'Image Preview | Read-only' : `${languageLabel} | ${getStatusText(languageId, serverStatus)}`}
           </span>
@@ -1244,6 +1287,11 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
                   <button className="w-full px-3 py-1.5 text-left transition-colors hover:bg-white/10 hover:text-[#d4d4d4]" onClick={() => setClipboard({ path: menu.node!.path, type: 'copy' })}>
                     Copy
                   </button>
+                  {menu.node && !menu.node.isDirectory && isHtmlFilePath(menu.node.path) ? (
+                    <button className="w-full px-3 py-1.5 text-left transition-colors hover:bg-white/10 hover:text-[#d4d4d4]" onClick={() => { void openBrowserPreview(menu.node?.path) }}>
+                      Open in Browser Tab
+                    </button>
+                  ) : null}
                   <button
                     className={`w-full px-3 py-1.5 text-left transition-colors ${clipboard ? 'hover:bg-white/10 hover:text-[#d4d4d4]' : 'cursor-not-allowed text-white/20'}`}
                     onClick={() => { void handlePaste(menu.node) }}

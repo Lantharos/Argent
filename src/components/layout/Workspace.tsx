@@ -14,6 +14,7 @@ type Props = {
   providers: ProviderConfig[]
   onUpdateTab: (tab: AppTab) => void
   onOpenEditorFileInNewTab: (spaceId: string, afterTabId: string, filePath: string, content: string, language?: string) => void
+  onOpenBrowserPreviewTab: (spaceId: string, afterTabId: string, filePath: string) => Promise<void>
   onSelectWorkspaceTab: (spaceId: string, tabId: string) => void
   onSplitTab: (spaceId: string, sourceTabId: string, targetTabId: string, direction: 'left' | 'right' | 'top' | 'bottom') => void
   onSetSplitRatio: (spaceId: string, branchId: string, ratio: number) => void
@@ -295,6 +296,7 @@ function RenderPanel({
   providers,
   onUpdateTab,
   onOpenEditorFileInNewTab,
+  onOpenBrowserPreviewTab,
   onSendAI,
 }: {
   spaceId: string
@@ -305,6 +307,7 @@ function RenderPanel({
   providers: ProviderConfig[]
   onUpdateTab: (tab: AppTab) => void
   onOpenEditorFileInNewTab: (spaceId: string, afterTabId: string, filePath: string, content: string, language?: string) => void
+  onOpenBrowserPreviewTab: (spaceId: string, afterTabId: string, filePath: string) => Promise<void>
   onSendAI: (
     providerId: string,
     messages: { role: 'user' | 'assistant'; content: string }[],
@@ -323,6 +326,7 @@ function RenderPanel({
       providers={providers}
       updateTab={onUpdateTab}
       openEditorFileInNewTab={onOpenEditorFileInNewTab}
+      openBrowserPreviewTab={onOpenBrowserPreviewTab}
       sendAI={onSendAI}
     />
   )
@@ -343,6 +347,7 @@ export function Workspace({
   providers,
   onUpdateTab,
   onOpenEditorFileInNewTab,
+  onOpenBrowserPreviewTab,
   onSelectWorkspaceTab,
   onSplitTab,
   onSetSplitRatio,
@@ -1140,6 +1145,7 @@ export function Workspace({
           providers={providers}
           onUpdateTab={onUpdateTab}
           onOpenEditorFileInNewTab={onOpenEditorFileInNewTab}
+          onOpenBrowserPreviewTab={onOpenBrowserPreviewTab}
           onSendAI={onSendAI}
         />
       </div>

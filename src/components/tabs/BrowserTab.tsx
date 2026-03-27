@@ -22,6 +22,7 @@ type FaviconUpdatedEvent = Event & {
 
 type Props = {
   tab: BrowserTabData
+  cwd: string
   onChange: (next: BrowserTabData) => void
 }
 
@@ -54,13 +55,22 @@ function isHttpUrl(value: string): boolean {
   }
 }
 
-export function BrowserTab({ tab, onChange }: Props) {
+function getFileTitle(filePath: string | null | undefined) {
+  if (!filePath) {
+    return 'Browser'
+  }
+
+  return filePath.split(/[/\\]/).at(-1) ?? 'Browser'
+}
+
+export function BrowserTab({ tab, cwd, onChange }: Props) {
   const [urlInputDraft, setUrlInputDraft] = useState<string | null>(null)
   const [nonce, setNonce] = useState(0)
   const [canGoBack, setCanGoBack] = useState(false)
   const [canGoForward, setCanGoForward] = useState(false)
   const viewRef = useRef<HTMLElement | null>(null)
   const domReadyRef = useRef(false)
+  const reloadTimeoutRef = useRef<number | null>(null)
   const urlInput = urlInputDraft ?? tab.url
 
   const safeUrl = useMemo(() => {
@@ -76,6 +86,7 @@ export function BrowserTab({ tab, onChange }: Props) {
       next.url === tab.url
       && next.title === tab.title
       && next.faviconUrl === tab.faviconUrl
+      && next.previewFilePath === tab.previewFilePath
     ) {
       return
     }
@@ -118,7 +129,7 @@ export function BrowserTab({ tab, onChange }: Props) {
   function commitUrl() {
     const next = resolveNavigationTarget(urlInput)
     setUrlInputDraft(null)
-    updateTabPatch({ url: next })
+    updateTabPatch({ url: next, previewFilePath: null })
   }
 
   function withReadyWebview<T>(action: (webview: BrowserWebview) => T): T | null {
@@ -167,10 +178,13 @@ export function BrowserTab({ tab, onChange }: Props) {
       setCanGoForward(Boolean(forward))
       setUrlInputDraft(nextUrl)
       const host = (() => {
+        if (tab.previewFilePath) {
+          return getFileTitle(tab.previewFilePath)
+        }
         try {
           return new URL(nextUrl).hostname.replace(/^www\./, '')
         } catch {
-          return 'Browser'
+          return getFileTitle(tab.previewFilePath)
         }
       })()
       updateTabPatch({ url: nextUrl, title: nextTitle || host })
@@ -231,7 +245,52 @@ export function BrowserTab({ tab, onChange }: Props) {
       webview.removeEventListener('dom-ready', onDomReady)
       webview.removeEventListener('console-message', onConsoleMessage)
     }
-  }, [nonce, safeUrl, updateTabPatch])
+  }, [nonce, safeUrl, tab.previewFilePath, updateTabPatch])
+
+  useEffect(() => {
+    if (!tab.previewFilePath) {
+      return
+    }
+
+    void window.argent.editor.watchPath({
+      targetPath: cwd,
+      kind: 'directory',
+      recursive: true,
+    })
+
+    const unsubscribe = window.argent.editor.onEvent((event) => {
+      if ((event.type !== 'path-changed' && event.type !== 'path-removed') || event.watchedPath !== cwd) {
+        return
+      }
+
+      if (reloadTimeoutRef.current !== null) {
+        window.clearTimeout(reloadTimeoutRef.current)
+      }
+
+      reloadTimeoutRef.current = window.setTimeout(() => {
+        reloadTimeoutRef.current = null
+        const reloaded = withReadyWebview((webview) => {
+          webview.reloadIgnoringCache()
+          return true
+        })
+        if (!reloaded) {
+          setNonce((value) => value + 1)
+        }
+      }, 120)
+    })
+
+    return () => {
+      if (reloadTimeoutRef.current !== null) {
+        window.clearTimeout(reloadTimeoutRef.current)
+        reloadTimeoutRef.current = null
+      }
+      unsubscribe()
+      void window.argent.editor.unwatchPath({
+        targetPath: cwd,
+        kind: 'directory',
+      })
+    }
+  }, [cwd, tab.previewFilePath])
 
   return (
     <section className="tab-pane browser-tab relative">

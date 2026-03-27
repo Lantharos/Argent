@@ -484,6 +484,40 @@ function App() {
     dispatch({ type: 'set-active-space', spaceId })
   }
 
+  async function openBrowserPreviewTab(spaceId: string, afterTabId: string, filePath: string) {
+    const space = state.spaces.find((item) => item.id === spaceId)
+    if (!space) {
+      return
+    }
+
+    const baseTab = createTab('browser', space.rootPath)
+    if (baseTab.type !== 'browser') {
+      return
+    }
+
+    const url = await window.argent.app.getPreviewUrl({
+      workspacePath: space.rootPath,
+      filePath,
+    })
+
+    const title = filePath.split(/[/\\]/).at(-1) ?? 'Preview'
+    const nextTab: AppTab = {
+      ...baseTab,
+      title,
+      url,
+      previewFilePath: filePath,
+    }
+
+    dispatch({
+      type: 'insert-tab-after',
+      spaceId,
+      afterTabId,
+      tab: nextTab,
+      activate: true,
+    })
+    dispatch({ type: 'set-active-space', spaceId })
+  }
+
   async function sendAI(
     providerId: string,
     messages: { role: 'user' | 'assistant'; content: string }[],
@@ -724,6 +758,7 @@ function App() {
           providers={providers}
           onUpdateTab={updateTab}
           onOpenEditorFileInNewTab={openEditorFileInNewTab}
+          onOpenBrowserPreviewTab={openBrowserPreviewTab}
           onSendAI={sendAI}
           onSplitTab={splitTab}
           onSetSplitRatio={setSplitRatio}

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, screen, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, screen, shell } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -24,6 +24,7 @@ import {
   setAssistantMode,
 } from './ai/client.js'
 import { LanguageServerManager } from './editor/languageServerManager.js'
+import { LocalPreviewServer } from './preview/localPreviewServer.js'
 import { TerminalManager } from './terminal/terminalManager.js'
 import { setupGitHandlers } from './git/gitManager.js'
 
@@ -39,6 +40,7 @@ const windowIconPath = path.join(__dirname, 'assets', 'icon.png')
 let windowRef = null
 let terminalManager = null
 let languageServerManager = null
+let localPreviewServer = null
 const activeAIStreams = new Map()
 let updateReadyPayload = null
 const DEFAULT_WINDOW_WIDTH = 1400
@@ -318,6 +320,18 @@ function setupIpc() {
   })
 
   ipcMain.handle('app:get-home-directory', () => app.getPath('home'))
+  ipcMain.handle('app:clipboard-read-text', () => clipboard.readText())
+  ipcMain.handle('app:clipboard-write-text', (_, value) => {
+    clipboard.writeText(typeof value === 'string' ? value : '')
+    return true
+  })
+  ipcMain.handle('app:get-preview-url', async (_, payload) => {
+    if (!localPreviewServer) {
+      throw new Error('Preview server is not available.')
+    }
+
+    return localPreviewServer.getPreviewUrl(payload.workspacePath, payload.filePath)
+  })
   ipcMain.handle('app:get-update-ready', () => updateReadyPayload)
   ipcMain.handle('app:restart-to-update', () => {
     if (!updateReadyPayload) {
@@ -551,6 +565,7 @@ app.whenReady().then(() => {
       windowRef.webContents.send(channel, payload)
     }
   })
+  localPreviewServer = new LocalPreviewServer()
   setupIpc()
 })
 
@@ -558,6 +573,10 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit()
   }
+})
+
+app.on('before-quit', () => {
+  void localPreviewServer?.close()
 })
 
 app.on('activate', () => {

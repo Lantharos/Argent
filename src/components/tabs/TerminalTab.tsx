@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { Terminal } from 'xterm'
 import { FitAddon } from 'xterm-addon-fit'
-import { ClipboardAddon } from '@xterm/addon-clipboard'
 import 'xterm/css/xterm.css'
 import type { TerminalTabData } from '../../types/argent'
 
@@ -132,8 +131,6 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
   const lastReportedTitleRef = useRef(sanitizeTerminalTitle(tab.title || DEFAULT_TERMINAL_TAB_TITLE))
   const webglAddonRef = useRef<{ dispose: () => void; clearTextureAtlas?: () => void } | null>(null)
   const webglContextLossDisposeRef = useRef<{ dispose: () => void } | null>(null)
-  const clipboardAddonRef = useRef<ClipboardAddon | null>(null)
-
   const alignTerminalViewport = useCallback(() => {
     const container = containerRef.current
     if (!container) {
@@ -273,12 +270,54 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
           : undefined,
     })
 
+    terminal.attachCustomKeyEventHandler((event) => {
+      if (event.type !== 'keydown') {
+        return true
+      }
+
+      const isPrimaryModifier = system.platform === 'darwin' ? event.metaKey : event.ctrlKey
+      const key = event.key.toLowerCase()
+
+      if (isPrimaryModifier && !event.shiftKey && key === 'c' && terminal.hasSelection()) {
+        const selection = terminal.getSelection()
+        if (selection) {
+          event.preventDefault()
+          void window.argent.app.writeClipboardText(selection)
+          terminal.clearSelection()
+          return false
+        }
+      }
+
+      if (isPrimaryModifier && event.shiftKey && key === 'c') {
+        const selection = terminal.getSelection()
+        if (selection) {
+          event.preventDefault()
+          void window.argent.app.writeClipboardText(selection)
+          terminal.clearSelection()
+          return false
+        }
+        return false
+      }
+
+      if ((isPrimaryModifier && event.shiftKey && key === 'v') || (event.shiftKey && event.key === 'Insert')) {
+        event.preventDefault()
+        void window.argent.app.readClipboardText().then((text) => {
+          if (!text) {
+            return
+          }
+          const sessionId = sessionIdRef.current
+          if (sessionId) {
+            void window.argent.terminal.write(sessionId, text)
+          }
+        })
+        return false
+      }
+
+      return true
+    })
+
     const fitAddon = new FitAddon()
     terminal.loadAddon(fitAddon)
-
-    const clipboardAddon = new ClipboardAddon()
-    terminal.loadAddon(clipboardAddon)
-    clipboardAddonRef.current = clipboardAddon
 
     if (containerRef.current) {
       alignTerminalViewport()
@@ -357,8 +396,6 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
       webglContextLossDisposeRef.current = null
       webglAddonRef.current?.dispose()
       webglAddonRef.current = null
-      clipboardAddonRef.current?.dispose()
-      clipboardAddonRef.current = null
       titleDispose.dispose()
       fitRef.current = null
       termRef.current = null

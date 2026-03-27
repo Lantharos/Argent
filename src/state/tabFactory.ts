@@ -30,6 +30,7 @@ export function createTab(type: AppTabType, rootPath: string): AppTab {
       title: 'Browser',
       url: 'https://www.google.com',
       faviconUrl: null,
+      previewFilePath: null,
     }
   }
 

@@ -19,6 +19,7 @@ type Props = {
   providers: ProviderConfig[]
   updateTab: (next: AppTab) => void
   openEditorFileInNewTab: (spaceId: string, afterTabId: string, filePath: string, content: string, language?: string) => void
+  openBrowserPreviewTab: (spaceId: string, afterTabId: string, filePath: string) => Promise<void>
   sendAI: (
     providerId: string,
     messages: { role: 'user' | 'assistant'; content: string }[],
@@ -28,7 +29,7 @@ type Props = {
   ) => Promise<string>
 }
 
-export function TabRenderer({ tab, isActive = true, spaceId, spaceKind, cwd, providers, updateTab, openEditorFileInNewTab, sendAI }: Props) {
+export function TabRenderer({ tab, isActive = true, spaceId, spaceKind, cwd, providers, updateTab, openEditorFileInNewTab, openBrowserPreviewTab, sendAI }: Props) {
   if (tab.type === 'ai') {
     return (
       <AITab
@@ -44,7 +45,7 @@ export function TabRenderer({ tab, isActive = true, spaceId, spaceKind, cwd, pro
   }
 
   if (tab.type === 'browser') {
-    return <BrowserTab tab={tab} onChange={(next) => updateTab(next)} />
+    return <BrowserTab tab={tab} cwd={cwd} onChange={(next) => updateTab(next)} />
   }
 
   if (tab.type === 'terminal') {
@@ -68,6 +69,7 @@ export function TabRenderer({ tab, isActive = true, spaceId, spaceKind, cwd, pro
         cwd={cwd}
         isActive={isActive}
         onOpenInNewTab={(payload) => openEditorFileInNewTab(spaceId, tab.id, payload.filePath, payload.content, payload.language)}
+        onOpenBrowserPreviewTab={(filePath) => openBrowserPreviewTab(spaceId, tab.id, filePath)}
         onChange={(next) => updateTab(next)}
       />
     </Suspense>

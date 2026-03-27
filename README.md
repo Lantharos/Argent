@@ -34,6 +34,7 @@ This repository is Windows-first today. The codebase includes cross-platform pie
 - Project spaces backed by local folders
 - AI chat tab with streaming responses, model selection, modes, slash commands, and file/image attachments
 - Built-in editor with file tree, drag-and-drop file moves, save shortcuts, and tab opening
+- Local HTML preview tabs with live reload on save inside a workspace
 - Integrated terminal sessions powered by `node-pty` and `xterm.js`
 - Built-in browser tab using Electron `webview`
 - Git tab for status, staging, diffs, commit history, remotes, and sync actions
@@ -91,8 +92,10 @@ The editor tab includes both file browsing and direct editing in the same surfac
 - open files in-place or in a new tab
 - drag and drop files between folders
 - context menu actions for cut, copy, paste, and delete
+- right-click `.html` files to open them in a browser preview tab
 - `Ctrl+S` or `Cmd+S` to save
 - font scaling shortcuts for quicker readability changes
+- HTML files can be opened in a live browser preview tab that refreshes after workspace file changes
 
 ### Terminal
 
