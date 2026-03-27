@@ -48,6 +48,10 @@ export class LanguageServerManager {
     return `${workspacePath}::${languageId}`
   }
 
+  createWatchKey(targetPath, kind) {
+    return `${kind}:${path.resolve(targetPath)}`
+  }
+
   async detectWorkspace(workspacePath) {
     const godotProject = isGodotProject(workspacePath)
     return {
@@ -167,8 +171,18 @@ export class LanguageServerManager {
     return true
   }
 
+  emitPathEvent(type, watchedPath, nextPath = null) {
+    this.sendToRenderer('editor:event', {
+      type,
+      watchedPath,
+      path: nextPath ?? watchedPath,
+    })
+  }
+
   watchFile(filePath) {
-    const existing = this.fileWatchers.get(filePath)
+    const resolvedPath = path.resolve(filePath)
+    const watchKey = this.createWatchKey(resolvedPath, 'file')
+    const existing = this.fileWatchers.get(watchKey)
     if (existing) {
       existing.count += 1
       return
@@ -177,30 +191,98 @@ export class LanguageServerManager {
     const watcher = {
       count: 1,
       handler: (current, previous) => {
-        if (current.mtimeMs === previous.mtimeMs && current.size === previous.size) {
+        const fileMissing = current.nlink === 0
+        const wasMissing = previous.nlink === 0
+        if (fileMissing && wasMissing) {
           return
         }
-        this.sendToRenderer('editor:event', {
-          type: 'file-changed',
-          filePath,
-        })
+
+        if (fileMissing) {
+          this.emitPathEvent('path-removed', resolvedPath)
+          return
+        }
+
+        if (current.mtimeMs === previous.mtimeMs && current.size === previous.size && !wasMissing) {
+          return
+        }
+
+        this.emitPathEvent('path-changed', resolvedPath)
       },
     }
 
-    fs.watchFile(filePath, { interval: 700 }, watcher.handler)
-    this.fileWatchers.set(filePath, watcher)
+    fs.watchFile(resolvedPath, { interval: 700 }, watcher.handler)
+    this.fileWatchers.set(watchKey, watcher)
   }
 
   unwatchFile(filePath) {
-    const existing = this.fileWatchers.get(filePath)
+    const resolvedPath = path.resolve(filePath)
+    const watchKey = this.createWatchKey(resolvedPath, 'file')
+    const existing = this.fileWatchers.get(watchKey)
     if (!existing) {
       return
     }
     existing.count -= 1
     if (existing.count <= 0) {
-      fs.unwatchFile(filePath, existing.handler)
-      this.fileWatchers.delete(filePath)
+      fs.unwatchFile(resolvedPath, existing.handler)
+      this.fileWatchers.delete(watchKey)
     }
+  }
+
+  watchPath({ targetPath, kind = 'file', recursive = false }) {
+    if (kind === 'file') {
+      this.watchFile(targetPath)
+      return true
+    }
+
+    const resolvedPath = path.resolve(targetPath)
+    const watchKey = this.createWatchKey(resolvedPath, 'directory')
+    const existing = this.fileWatchers.get(watchKey)
+    if (existing) {
+      existing.count += 1
+      return true
+    }
+
+    try {
+      const watcherInstance = fs.watch(resolvedPath, { recursive }, (_, changedPath) => {
+        const nextPath = changedPath ? path.join(resolvedPath, changedPath.toString()) : resolvedPath
+        const exists = fs.existsSync(nextPath)
+        this.emitPathEvent(exists ? 'path-changed' : 'path-removed', resolvedPath, nextPath)
+      })
+
+      const watcher = {
+        count: 1,
+        close: () => watcherInstance.close(),
+      }
+
+      this.fileWatchers.set(watchKey, watcher)
+      return true
+    } catch {
+      if (recursive) {
+        return this.watchPath({ targetPath: resolvedPath, kind, recursive: false })
+      }
+      return false
+    }
+  }
+
+  unwatchPath({ targetPath, kind = 'file' }) {
+    if (kind === 'file') {
+      this.unwatchFile(targetPath)
+      return true
+    }
+
+    const resolvedPath = path.resolve(targetPath)
+    const watchKey = this.createWatchKey(resolvedPath, 'directory')
+    const existing = this.fileWatchers.get(watchKey)
+    if (!existing) {
+      return true
+    }
+
+    existing.count -= 1
+    if (existing.count <= 0) {
+      existing.close?.()
+      this.fileWatchers.delete(watchKey)
+    }
+    return true
   }
 
   async emitStatus(workspacePath, languageId, status, detail = null, filePath = null) {

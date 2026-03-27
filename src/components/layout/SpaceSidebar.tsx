@@ -14,6 +14,7 @@ type Props = {
   onAddSpaceFromFolder: () => Promise<boolean>
   onAddEmptySpace: () => Promise<boolean>
   onCloneRepo: (repoUrl: string, parentDir?: string) => Promise<{ success: boolean; error?: string; parentDir?: string | null; authRequired?: boolean }>
+  onToggleSpaceCollapsed: (spaceId: string, value: boolean) => void
   onRenameSpace: (spaceId: string, name: string) => void
   onDeleteSpace: (spaceId: string) => void
   onOpenSpaceInExplorer: (spaceId: string) => Promise<boolean>
@@ -433,6 +434,7 @@ export function SpaceSidebar({
   onAddSpaceFromFolder,
   onAddEmptySpace,
   onCloneRepo,
+  onToggleSpaceCollapsed,
   onRenameSpace,
   onDeleteSpace,
   onOpenSpaceInExplorer,
@@ -447,7 +449,6 @@ export function SpaceSidebar({
   updateReady,
   onRestartToUpdate,
 }: Props) {
-  const [collapsedSpaceIds, setCollapsedSpaceIds] = useState<string[]>([])
   const [dragTabPayload, setDragTabPayload] = useState<{ spaceId: string; tabId: string } | null>(null)
   const [editingTab, setEditingTab] = useState<{ spaceId: string; tabId: string; value: string } | null>(null)
   const [editingSpace, setEditingSpace] = useState<{ spaceId: string; value: string } | null>(null)
@@ -553,9 +554,11 @@ export function SpaceSidebar({
   }, [])
 
   function toggleCollapsed(spaceId: string) {
-    setCollapsedSpaceIds((current) =>
-      current.includes(spaceId) ? current.filter((id) => id !== spaceId) : [...current, spaceId],
-    )
+    const space = spaces.find((entry) => entry.id === spaceId)
+    if (!space) {
+      return
+    }
+    onToggleSpaceCollapsed(spaceId, !(space.collapsed ?? false))
   }
 
   function isBrowserTabPayload(payload: { spaceId: string; tabId: string } | null) {
@@ -1056,7 +1059,7 @@ export function SpaceSidebar({
       <div className="drag-region flex-1 min-h-0 flex flex-col gap-0.5 overflow-auto pr-1">
         {spaces.filter(s => !s.isEssential).map((space, spaceIndex) => {
           const isActive = !activeEssentialTabId && space.id === activeSpaceId
-          const isCollapsed = existingSpaceIds.has(space.id) && collapsedSpaceIds.includes(space.id)
+          const isCollapsed = existingSpaceIds.has(space.id) && Boolean(space.collapsed)
           const activeSpaceTab = space.tabs.find((tab) => tab.id === space.activeTabId) ?? null
           const activeSpaceGroup = activeSpaceTab ? findGroupForTab(space.tabGroups, activeSpaceTab.id) : null
           const activeGroupTabIds = (() => {

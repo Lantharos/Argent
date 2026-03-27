@@ -563,13 +563,13 @@ export function Workspace({
       setTitlebarVisible(nextVisible)
     }
 
-    if (pageGestureActive) {
-      setTitlebar(false)
+    if (currentTab.type === 'browser' || currentTab.type === 'editor') {
+      setTitlebar(true)
       return
     }
 
-    if (currentTab.type === 'browser') {
-      setTitlebar(true)
+    if (pageGestureActive) {
+      setTitlebar(false)
       return
     }
 

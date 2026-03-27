@@ -89,8 +89,9 @@ export type EditorEvent =
       server: LspServerState
     }
   | {
-      type: 'file-changed'
-      filePath: string
+      type: 'path-changed' | 'path-removed'
+      watchedPath: string
+      path: string
     }
 
 export type EditorCompletionRequest = {

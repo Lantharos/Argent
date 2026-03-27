@@ -97,6 +97,8 @@ contextBridge.exposeInMainWorld('argent', {
     openDocument: (payload) => ipcRenderer.invoke('editor:open-document', payload),
     changeDocument: (payload) => ipcRenderer.invoke('editor:change-document', payload),
     closeDocument: (payload) => ipcRenderer.invoke('editor:close-document', payload),
+    watchPath: (payload) => ipcRenderer.invoke('editor:watch-path', payload),
+    unwatchPath: (payload) => ipcRenderer.invoke('editor:unwatch-path', payload),
     requestCompletion: (payload) => ipcRenderer.invoke('editor:request-completion', payload),
     requestHover: (payload) => ipcRenderer.invoke('editor:request-hover', payload),
     requestDefinition: (payload) => ipcRenderer.invoke('editor:request-definition', payload),

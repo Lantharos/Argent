@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import type { AppSnapshot, AppSpace, AppTab, AppTabGroup, AppTabSplitNode, AppTabType, EssentialTab, PromptAttachment, ProviderConfig } from './types/argent'
 import { appReducer } from './state/reducer'
@@ -133,14 +133,14 @@ function App() {
   const activeTab = useMemo(() => getTab(activeSpace, activeSpace?.activeTabId ?? null), [activeSpace])
   const compactSidebar = state.compactSidebar ?? false
 
-  const clearCompactSidebarCloseTimer = () => {
+  const clearCompactSidebarCloseTimer = useCallback(() => {
     if (compactSidebarCloseTimerRef.current !== null) {
       window.clearTimeout(compactSidebarCloseTimerRef.current)
       compactSidebarCloseTimerRef.current = null
     }
-  }
+  }, [])
 
-  const scheduleCompactSidebarClose = (delay = 140) => {
+  const scheduleCompactSidebarClose = useCallback((delay = 140) => {
     if (compactSidebarPopoverLockedRef.current) {
       return
     }
@@ -159,16 +159,29 @@ function App() {
       setCompactSidebarRevealed(false)
       compactSidebarCloseTimerRef.current = null
     }, delay)
-  }
+  }, [clearCompactSidebarCloseTimer])
 
   useEffect(() => {
     compactSidebarPopoverLockedRef.current = compactSidebarPopoverLocked
   }, [compactSidebarPopoverLocked])
 
   useEffect(() => {
+    if (compactSidebar || !compactSidebarRevealed) {
+      return
+    }
+
+    const timeout = window.setTimeout(() => {
+      setCompactSidebarRevealed(false)
+    }, 0)
+
+    return () => {
+      window.clearTimeout(timeout)
+    }
+  }, [compactSidebar, compactSidebarRevealed])
+
+  useEffect(() => {
     if (!compactSidebar) {
       clearCompactSidebarCloseTimer()
-      setCompactSidebarRevealed(false)
       return
     }
 
@@ -213,7 +226,7 @@ function App() {
       window.removeEventListener('mousemove', onMouseMove)
       window.removeEventListener('blur', onWindowBlur)
     }
-  }, [compactSidebar, compactSidebarRevealed])
+  }, [clearCompactSidebarCloseTimer, compactSidebar, compactSidebarRevealed, scheduleCompactSidebarClose])
 
   useEffect(() => {
     const onSidebarPopoverLock = (event: Event) => {
@@ -546,6 +559,9 @@ function App() {
       onCloneRepo={cloneRepoToSpace}
       onRenameSpace={(spaceId: string, name: string) => dispatch({ type: 'rename-space', spaceId, name })}
       onDeleteSpace={(spaceId: string) => dispatch({ type: 'delete-space', spaceId })}
+      onToggleSpaceCollapsed={(spaceId: string, value: boolean) => {
+        dispatch({ type: 'set-space-collapsed', spaceId, value })
+      }}
       onOpenSpaceInExplorer={(spaceId: string) => {
         const target = state.spaces.find((space) => space.id === spaceId)
         if (!target) {
@@ -611,6 +627,7 @@ function App() {
             rootPath: homeDirectory || '/',
             kind: 'global' as const,
             isEssential: true,
+            collapsed: false,
             tabs: [],
             activeTabId: '',
             secondaryTabId: null,
@@ -655,6 +672,7 @@ function App() {
             rootPath: homeDirectory || '/',
             kind: 'global' as const,
             isEssential: true,
+            collapsed: false,
             tabs: [],
             activeTabId: '',
             secondaryTabId: null,

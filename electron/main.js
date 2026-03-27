@@ -422,6 +422,8 @@ function setupIpc() {
   ipcMain.handle('editor:open-document', (_, payload) => languageServerManager.openDocument(payload))
   ipcMain.handle('editor:change-document', (_, payload) => languageServerManager.changeDocument(payload))
   ipcMain.handle('editor:close-document', (_, payload) => languageServerManager.closeDocument(payload))
+  ipcMain.handle('editor:watch-path', (_, payload) => languageServerManager.watchPath(payload))
+  ipcMain.handle('editor:unwatch-path', (_, payload) => languageServerManager.unwatchPath(payload))
   ipcMain.handle('editor:request-completion', (_, payload) => languageServerManager.requestCompletion(payload))
   ipcMain.handle('editor:request-hover', (_, payload) => languageServerManager.requestHover(payload))
   ipcMain.handle('editor:request-definition', (_, payload) => languageServerManager.requestDefinition(payload))

@@ -370,6 +370,7 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
   const languageConfig = useMemo(() => getLanguageConfig(languageId), [languageId])
   const isImageFile = useMemo(() => isImageFilePath(tab.filePath), [tab.filePath])
   const imageSrc = imageDataUrl
+  const workspaceRootName = useMemo(() => getPathBaseName(cwd), [cwd])
 
   useEffect(() => {
     currentFileRef.current = tab.filePath
@@ -428,12 +429,57 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
   }, [externalChangeNotice])
 
   useEffect(() => {
-    window.argent.fs.readDir(cwd).then(setRootNodes)
+    let disposed = false
+
+    void window.argent.fs.readDir(cwd).then((nodes) => {
+      if (!disposed) {
+        setRootNodes(nodes)
+      }
+    })
+
+    return () => {
+      disposed = true
+    }
   }, [cwd, refreshCount])
 
   useEffect(() => {
     window.argent.editor.detectWorkspace(cwd).then(setWorkspaceInfo)
   }, [cwd])
+
+  useEffect(() => {
+    void window.argent.editor.watchPath({
+      targetPath: cwd,
+      kind: 'directory',
+      recursive: true,
+    })
+
+    return () => {
+      void window.argent.editor.unwatchPath({
+        targetPath: cwd,
+        kind: 'directory',
+      })
+    }
+  }, [cwd])
+
+  useEffect(() => {
+    if (!tab.filePath) {
+      return
+    }
+
+    const filePath = tab.filePath
+
+    void window.argent.editor.watchPath({
+      targetPath: filePath,
+      kind: 'file',
+    })
+
+    return () => {
+      void window.argent.editor.unwatchPath({
+        targetPath: filePath,
+        kind: 'file',
+      })
+    }
+  }, [tab.filePath])
 
   useEffect(() => {
     function closeWhenOutside(event: MouseEvent) {
@@ -457,7 +503,17 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
         setServerStatus(event.server)
       }
 
-      if (event.type === 'file-changed' && event.filePath === currentFileRef.current && tabRef.current.filePath) {
+      if (event.type === 'path-changed' && event.watchedPath === cwd) {
+        setRefreshCount((count) => count + 1)
+        void window.argent.fs.readDir(cwd).then(setRootNodes)
+      }
+
+      if (event.type === 'path-removed' && event.watchedPath === cwd) {
+        setRefreshCount((count) => count + 1)
+        void window.argent.fs.readDir(cwd).then(setRootNodes)
+      }
+
+      if (event.type === 'path-changed' && event.watchedPath === currentFileRef.current && tabRef.current.filePath) {
         if (isImageFilePath(tabRef.current.filePath)) {
           setImageVersion((value) => value + 1)
           setExternalChangeNotice('Reloaded image preview.')
@@ -481,6 +537,28 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
           })
         })
       }
+
+      if (event.type === 'path-removed' && event.watchedPath === currentFileRef.current && tabRef.current.filePath) {
+        if (tabRef.current.dirty) {
+          setExternalChangeNotice('File was removed outside the editor. Save to recreate it or pick another file.')
+          return
+        }
+
+        if (isImageFilePath(tabRef.current.filePath)) {
+          setImageDataUrl(null)
+        }
+
+        suppressModelChangeRef.current = true
+        versionRef.current = 1
+        onChangeRef.current({
+          ...tabRef.current,
+          title: getPathBaseName(tabRef.current.filePath) || workspaceRootName,
+          content: '',
+          dirty: false,
+          language: detectLanguageFromPath(tabRef.current.filePath).id,
+        })
+        setExternalChangeNotice('File was removed outside the editor.')
+      }
     })
 
     document.addEventListener('mousedown', closeWhenOutside, true)
@@ -493,7 +571,7 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
       document.removeEventListener('contextmenu', closeWhenOutside, true)
       window.removeEventListener('argent:ui-interaction', closeFromUiInteraction)
     }
-  }, [])
+  }, [cwd, workspaceRootName])
 
   useEffect(() => {
     if (!tab.filePath || isImageFile) {
@@ -711,8 +789,6 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onChange 
   const installSupported = Boolean(serverStatus?.install?.supported)
   const installLabel = serverStatus?.install?.label ?? 'Install LSP'
   const canStartServer = languageConfig.support === 'lsp' && serverStatus?.status === 'stopped'
-  const workspaceRootName = useMemo(() => getPathBaseName(cwd), [cwd])
-
   async function handleInstallServer() {
     setInstallingServer(true)
     setInstallMessage(null)

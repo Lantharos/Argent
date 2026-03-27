@@ -23,6 +23,7 @@ import remarkBreaks from "remark-breaks";
 import type {
   AITabData,
   AIStreamEvent,
+  ChatMessage,
   PromptAttachment,
   ProviderConfig,
 } from "../../types/argent";
@@ -62,6 +63,7 @@ const EFFORT_ORDER = [
   "xhigh",
 ] as const;
 const MODEL_CACHE_TTL_MS = 5 * 60 * 1000;
+const STREAM_IDLE_TIMEOUT_MS = 45_000;
 const sharedModelOptionsCache: Record<string, ModelOption[]> = {};
 const sharedModelOptionsFetchedAt: Record<string, number> = {};
 const sharedModelOptionsInflight = new Map<string, Promise<ModelOption[]>>();
@@ -224,6 +226,103 @@ function normalizeMarkdownSpacing(content: string) {
   return content.replace(/\r\n/g, "\n");
 }
 
+function decodeURIComponentSafe(value: string) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function isMetaAssistantContent(content: string) {
+  return (
+    content.startsWith("[[tool]]") ||
+    content.startsWith("[[thought]]") ||
+    content.startsWith("[[plan]]")
+  );
+}
+
+function appendAssistantContent(
+  messages: ChatMessage[],
+  delta: string,
+  preferredIndex?: number | null,
+): number | null {
+  if (!delta) {
+    return null;
+  }
+
+  const existingMessage =
+    typeof preferredIndex === "number" &&
+    preferredIndex >= 0 &&
+    preferredIndex < messages.length
+      ? messages[preferredIndex]
+      : null;
+
+  if (
+    existingMessage?.role === "assistant" &&
+    !isMetaAssistantContent(existingMessage.content)
+  ) {
+    const nextIndex = preferredIndex as number;
+    messages[nextIndex] = {
+      ...existingMessage,
+      content: `${existingMessage.content}${delta}`,
+    };
+    return nextIndex;
+  }
+
+  const lastMessage = messages.at(-1);
+  if (
+    lastMessage?.role === "assistant" &&
+    !isMetaAssistantContent(lastMessage.content)
+  ) {
+    const nextIndex = messages.length - 1;
+    messages[nextIndex] = {
+      ...lastMessage,
+      content: `${lastMessage.content}${delta}`,
+    };
+    return nextIndex;
+  }
+
+  messages.push({ role: "assistant", content: delta });
+  return messages.length - 1;
+}
+
+function appendThoughtContent(
+  messages: ChatMessage[],
+  delta: string,
+  preferredIndex?: number | null,
+): number | null {
+  if (!delta) {
+    return null;
+  }
+
+  const existingMessage =
+    typeof preferredIndex === "number" &&
+    preferredIndex >= 0 &&
+    preferredIndex < messages.length
+      ? messages[preferredIndex]
+      : null;
+  const existingThought =
+    existingMessage?.role === "assistant"
+      ? parseThoughtMessage(existingMessage.content)
+      : null;
+
+  if (typeof existingThought === "string") {
+    const nextIndex = preferredIndex as number;
+    messages[nextIndex] = {
+      role: "assistant",
+      content: formatThoughtMessage(`${existingThought}${delta}`),
+    };
+    return nextIndex;
+  }
+
+  messages.push({
+    role: "assistant",
+    content: formatThoughtMessage(delta),
+  });
+  return messages.length - 1;
+}
+
 function clearStreamBuffer(
   bufferRef: { current: string },
   timerRef: { current: number | null },
@@ -246,12 +345,6 @@ function toolStatusLabel(status: string) {
 function isToolActiveStatus(status: string) {
   return (
     status === "pending" || status === "in_progress" || status === "running"
-  );
-}
-
-function shouldStartNewThoughtAfterToolStatus(status: string) {
-  return (
-    status === "completed" || status === "failed" || status === "cancelled"
   );
 }
 
@@ -315,12 +408,7 @@ function parseToolMessage(content: string) {
   const kind = parts[2] || "other";
   const encodedDetail = parts[3] || "";
 
-  let title = encodedTitle;
-  try {
-    title = decodeURIComponent(encodedTitle);
-  } catch {
-    title = encodedTitle;
-  }
+  const title = decodeURIComponentSafe(encodedTitle);
 
   let detail: string | null = null;
   if (encodedDetail) {
@@ -345,12 +433,7 @@ function parsePlanMessage(content: string) {
   }
 
   const raw = content.slice("[[plan]]".length);
-  let decoded = raw;
-  try {
-    decoded = decodeURIComponent(raw);
-  } catch {
-    decoded = raw;
-  }
+  const decoded = decodeURIComponentSafe(raw);
 
   try {
     const parsed = JSON.parse(decoded);
@@ -452,11 +535,7 @@ function parseThoughtMessage(content: string) {
   }
 
   const raw = content.slice("[[thought]]".length);
-  try {
-    return decodeURIComponent(raw);
-  } catch {
-    return raw;
-  }
+  return decodeURIComponentSafe(raw);
 }
 
 function compactConversation(
@@ -635,7 +714,6 @@ export function AITab({
   const flushTimerRef = useRef<number | null>(null);
   const activeAssistantMessageIndexRef = useRef<number | null>(null);
   const activeThoughtMessageIndexRef = useRef<number | null>(null);
-  const shouldStartNewThoughtBlockRef = useRef(false);
   const pendingThoughtTextRef = useRef("");
   const thoughtFlushTimerRef = useRef<number | null>(null);
   const tabRef = useRef(tab);
@@ -995,6 +1073,10 @@ export function AITab({
     });
   }, [groupedModelFamilies]);
 
+  useEffect(() => {
+    setCollapsedGroups(tab.collapsedModelGroups ?? {});
+  }, [tab.collapsedModelGroups, tab.id]);
+
   const lastUserMessageIndex = useMemo(() => {
     for (let i = tab.messages.length - 1; i >= 0; i--) {
       if (tab.messages[i].role === "user") return i;
@@ -1169,49 +1251,11 @@ export function AITab({
 
       updateTab((current) => {
         const messages = [...current.messages];
-        const existingIndex = activeAssistantMessageIndexRef.current;
-        const existingMessage =
-          typeof existingIndex === "number" &&
-          existingIndex >= 0 &&
-          existingIndex < messages.length
-            ? messages[existingIndex]
-            : null;
-        const existingIsMetaLine =
-          existingMessage?.role === "assistant" &&
-          typeof existingMessage.content === "string" &&
-          (existingMessage.content.startsWith("[[tool]]") ||
-            existingMessage.content.startsWith("[[thought]]") ||
-            existingMessage.content.startsWith("[[plan]]"));
-
-        if (
-          existingMessage &&
-          existingMessage.role === "assistant" &&
-          !existingIsMetaLine &&
-          typeof existingIndex === "number"
-        ) {
-          messages[existingIndex] = {
-            ...existingMessage,
-            content: `${existingMessage.content}${delta}`,
-          };
-        } else {
-          const lastMessage = messages.at(-1);
-          const lastIsMetaLine =
-            lastMessage?.role === "assistant" &&
-            typeof lastMessage.content === "string" &&
-            (lastMessage.content.startsWith("[[tool]]") ||
-              lastMessage.content.startsWith("[[thought]]") ||
-              lastMessage.content.startsWith("[[plan]]"));
-
-          if (lastMessage?.role === "assistant" && !lastIsMetaLine) {
-            messages[messages.length - 1] = {
-              ...lastMessage,
-              content: `${lastMessage.content}${delta}`,
-            };
-          } else {
-            messages.push({ role: "assistant", content: delta });
-          }
-          activeAssistantMessageIndexRef.current = messages.length - 1;
-        }
+        activeAssistantMessageIndexRef.current = appendAssistantContent(
+          messages,
+          delta,
+          activeAssistantMessageIndexRef.current,
+        );
 
         return {
           ...current,
@@ -1270,34 +1314,11 @@ export function AITab({
 
       updateTab((current) => {
         const messages = [...current.messages];
-        const existingIndex = activeThoughtMessageIndexRef.current;
-        const existingMessage =
-          typeof existingIndex === "number" &&
-          existingIndex >= 0 &&
-          existingIndex < messages.length
-            ? messages[existingIndex]
-            : null;
-        const existingThought =
-          existingMessage?.role === "assistant" &&
-          typeof existingMessage.content === "string"
-            ? parseThoughtMessage(existingMessage.content)
-            : null;
-
-        if (
-          typeof existingThought === "string" &&
-          typeof existingIndex === "number"
-        ) {
-          messages[existingIndex] = {
-            role: "assistant",
-            content: formatThoughtMessage(`${existingThought}${delta}`),
-          };
-        } else {
-          messages.push({
-            role: "assistant",
-            content: formatThoughtMessage(delta),
-          });
-          activeThoughtMessageIndexRef.current = messages.length - 1;
-        }
+        activeThoughtMessageIndexRef.current = appendThoughtContent(
+          messages,
+          delta,
+          activeThoughtMessageIndexRef.current,
+        );
 
         return {
           ...current,
@@ -1473,22 +1494,12 @@ export function AITab({
           return;
         }
 
-        if (
-          shouldStartNewThoughtBlockRef.current &&
-          !isThoughtFlushActive &&
-          pendingThoughtTextRef.current.length === 0
-        ) {
-          activeThoughtMessageIndexRef.current = null;
-          shouldStartNewThoughtBlockRef.current = false;
-        }
-
         enqueueThoughtDelta(event.delta);
         return;
       }
 
       if (event.type === "text-delta") {
         activeThoughtMessageIndexRef.current = null;
-        shouldStartNewThoughtBlockRef.current = false;
 
         if (
           thoughtFlushTimerRef.current !== null ||
@@ -1519,9 +1530,6 @@ export function AITab({
       if (event.type === "tool") {
         const toolId = event.id || `${event.kind || "tool"}:${event.title}`;
         toolStatusByIdRef.current[toolId] = event.status;
-        if (shouldStartNewThoughtAfterToolStatus(event.status)) {
-          shouldStartNewThoughtBlockRef.current = true;
-        }
 
         const pendingAssistant = pendingAssistantTextRef.current;
         if (pendingAssistant) {
@@ -1547,53 +1555,16 @@ export function AITab({
         updateTab((current) => {
           const messages = [...current.messages];
 
-          if (
-            pendingAssistant &&
-            typeof activeAssistantMessageIndexRef.current === "number"
-          ) {
-            const idx = activeAssistantMessageIndexRef.current;
-            if (
-              idx >= 0 &&
-              idx < messages.length &&
-              messages[idx].role === "assistant"
-            ) {
-              const isMetaLine =
-                messages[idx].content.startsWith("[[tool]]") ||
-                messages[idx].content.startsWith("[[thought]]") ||
-                messages[idx].content.startsWith("[[plan]]");
-              if (!isMetaLine) {
-                messages[idx] = {
-                  ...messages[idx],
-                  content: `${messages[idx].content}${pendingAssistant}`,
-                };
-              }
-            }
-          }
-
-          if (
-            pendingThought &&
-            typeof activeThoughtMessageIndexRef.current === "number"
-          ) {
-            const thoughtIdx = activeThoughtMessageIndexRef.current;
-            if (
-              thoughtIdx >= 0 &&
-              thoughtIdx < messages.length &&
-              messages[thoughtIdx].role === "assistant"
-            ) {
-              const existingThought = parseThoughtMessage(
-                messages[thoughtIdx].content,
-              );
-              if (typeof existingThought === "string") {
-                messages[thoughtIdx] = {
-                  ...messages[thoughtIdx],
-                  content: formatThoughtMessage(
-                    `${existingThought}${pendingThought}`,
-                  ),
-                };
-              }
-            }
-            activeThoughtMessageIndexRef.current = null;
-          }
+          activeAssistantMessageIndexRef.current = appendAssistantContent(
+            messages,
+            pendingAssistant,
+            activeAssistantMessageIndexRef.current,
+          );
+          activeThoughtMessageIndexRef.current = appendThoughtContent(
+            messages,
+            pendingThought,
+            activeThoughtMessageIndexRef.current,
+          );
 
           const existingIndex = toolMessageIndexByIdRef.current[toolId];
           const content = formatToolMessage(
@@ -1618,12 +1589,16 @@ export function AITab({
               content,
             });
             toolMessageIndexByIdRef.current[toolId] = messages.length - 1;
-            activeAssistantMessageIndexRef.current = null;
           }
 
+          activeAssistantMessageIndexRef.current = null;
+
           if (deferredText) {
-            messages.push({ role: "assistant", content: deferredText });
-            activeAssistantMessageIndexRef.current = messages.length - 1;
+            activeAssistantMessageIndexRef.current = appendAssistantContent(
+              messages,
+              deferredText,
+              null,
+            );
           }
 
           return {
@@ -1637,16 +1612,24 @@ export function AITab({
       if (event.type === "error") {
         activeRequestIdRef.current = null;
         toolStatusByIdRef.current = {};
+        const pendingAssistant = pendingAssistantTextRef.current;
         activeThoughtMessageIndexRef.current = null;
-        shouldStartNewThoughtBlockRef.current = false;
+        clearStreamBuffer(pendingAssistantTextRef, flushTimerRef);
         clearStreamBuffer(pendingThoughtTextRef, thoughtFlushTimerRef);
+        setIsAssistantFlushActive(false);
         setIsThoughtFlushActive(false);
         deferredTextDeltaRef.current = null;
         setLoading(false);
         const wasCancelled = /cancel|aborted/i.test(event.message);
 
         updateTab((current) => {
-          const messages = current.messages
+          const messages = [...current.messages];
+          activeAssistantMessageIndexRef.current = appendAssistantContent(
+            messages,
+            pendingAssistant,
+            activeAssistantMessageIndexRef.current,
+          );
+          const finalizedMessages = messages
             .filter(
               (msg) =>
                 !(
@@ -1673,7 +1656,7 @@ export function AITab({
             });
           return {
             ...current,
-            messages,
+            messages: finalizedMessages,
             isGenerating: false,
             hasUnread: !isActiveRef.current,
           };
@@ -1688,8 +1671,12 @@ export function AITab({
       if (event.type === "done") {
         activeRequestIdRef.current = null;
         toolStatusByIdRef.current = {};
+        const pendingAssistant = pendingAssistantTextRef.current;
         activeThoughtMessageIndexRef.current = null;
-        shouldStartNewThoughtBlockRef.current = false;
+        clearStreamBuffer(pendingAssistantTextRef, flushTimerRef);
+        clearStreamBuffer(pendingThoughtTextRef, thoughtFlushTimerRef);
+        setIsAssistantFlushActive(false);
+        setIsThoughtFlushActive(false);
         setLoading(false);
 
         if (event.reply?.id) {
@@ -1747,7 +1734,13 @@ export function AITab({
         }
 
         updateTab((current) => {
-          const messages = current.messages
+          const messages = [...current.messages];
+          activeAssistantMessageIndexRef.current = appendAssistantContent(
+            messages,
+            pendingAssistant,
+            activeAssistantMessageIndexRef.current,
+          );
+          const finalizedMessages = messages
             .filter(
               (msg) =>
                 !(
@@ -1774,7 +1767,7 @@ export function AITab({
             });
           return {
             ...current,
-            messages,
+            messages: finalizedMessages,
             isGenerating: false,
             hasUnread: !isActiveRef.current,
           };
@@ -1834,7 +1827,7 @@ export function AITab({
       }
 
       const idleForMs = Date.now() - lastEventAt;
-      if (idleForMs < 8000) {
+      if (idleForMs < STREAM_IDLE_TIMEOUT_MS) {
         return;
       }
 
@@ -1860,16 +1853,24 @@ export function AITab({
       }
 
       const staleRequestId = activeRequestIdRef.current;
+      const pendingAssistant = pendingAssistantTextRef.current;
       activeRequestIdRef.current = null;
       toolStatusByIdRef.current = {};
       activeThoughtMessageIndexRef.current = null;
-      shouldStartNewThoughtBlockRef.current = false;
+      clearStreamBuffer(pendingAssistantTextRef, flushTimerRef);
       clearStreamBuffer(pendingThoughtTextRef, thoughtFlushTimerRef);
+      setIsAssistantFlushActive(false);
       setIsThoughtFlushActive(false);
       setLoading(false);
 
       updateTab((current) => {
-        const messages = current.messages
+        const messages = [...current.messages];
+        activeAssistantMessageIndexRef.current = appendAssistantContent(
+          messages,
+          pendingAssistant,
+          activeAssistantMessageIndexRef.current,
+        );
+        const finalizedMessages = messages
           .filter(
             (msg) =>
               !(
@@ -1897,7 +1898,7 @@ export function AITab({
 
         return {
           ...current,
-          messages,
+          messages: finalizedMessages,
           isGenerating: false,
           hasUnread: !isActiveRef.current,
         };
@@ -2439,7 +2440,6 @@ export function AITab({
     lastStreamEventAtRef.current = 0;
     activeAssistantMessageIndexRef.current = null;
     activeThoughtMessageIndexRef.current = null;
-    shouldStartNewThoughtBlockRef.current = false;
     cancelRequestedRef.current = false;
     clearStreamBuffer(pendingAssistantTextRef, flushTimerRef);
     clearStreamBuffer(pendingThoughtTextRef, thoughtFlushTimerRef);
@@ -2601,7 +2601,6 @@ export function AITab({
     lastStreamEventAtRef.current = 0;
     activeAssistantMessageIndexRef.current = null;
     activeThoughtMessageIndexRef.current = null;
-    shouldStartNewThoughtBlockRef.current = false;
     cancelRequestedRef.current = false;
     clearStreamBuffer(pendingAssistantTextRef, flushTimerRef);
     clearStreamBuffer(pendingThoughtTextRef, thoughtFlushTimerRef);
@@ -2708,12 +2707,12 @@ export function AITab({
 
   async function handleStopGeneration() {
     const requestId = activeRequestIdRef.current;
+    const pendingAssistant = pendingAssistantTextRef.current;
     cancelRequestedRef.current = true;
     toolStatusByIdRef.current = {};
     lastStreamEventAtRef.current = 0;
     activeAssistantMessageIndexRef.current = null;
     activeThoughtMessageIndexRef.current = null;
-    shouldStartNewThoughtBlockRef.current = false;
     clearStreamBuffer(pendingAssistantTextRef, flushTimerRef);
     clearStreamBuffer(pendingThoughtTextRef, thoughtFlushTimerRef);
     setIsAssistantFlushActive(false);
@@ -2722,7 +2721,9 @@ export function AITab({
     setLoading(false);
 
     updateTab((current) => {
-      const messages = current.messages
+      const messages = [...current.messages];
+      appendAssistantContent(messages, pendingAssistant, null);
+      const finalizedMessages = messages
         .filter(
           (msg) =>
             !(
@@ -2750,7 +2751,7 @@ export function AITab({
 
       return {
         ...current,
-        messages,
+        messages: finalizedMessages,
         isGenerating: false,
       };
     });
@@ -3060,7 +3061,6 @@ export function AITab({
                   const isStreamingThought =
                     isThoughtFlushActive &&
                     index === lastAssistantThoughtIndex &&
-                    !shouldStartNewThoughtBlockRef.current &&
                     (activeAssistantMessageIndexRef.current === null ||
                       index > activeAssistantMessageIndexRef.current);
                   return (
@@ -3590,10 +3590,17 @@ export function AITab({
                                   type="button"
                                   className="w-full text-left rounded-md px-2.5 py-2 text-xs font-semibold uppercase tracking-wider text-[#9f9f9f] bg-[#202020] hover:bg-[#272727] inline-flex items-center justify-between"
                                   onClick={() => {
-                                    setCollapsedGroups((prev) => ({
-                                      ...prev,
-                                      [section.group]: !isCollapsed,
-                                    }));
+                                    setCollapsedGroups((prev) => {
+                                      const next = {
+                                        ...prev,
+                                        [section.group]: !isCollapsed,
+                                      };
+                                      updateTab((current) => ({
+                                        ...current,
+                                        collapsedModelGroups: next,
+                                      }));
+                                      return next;
+                                    });
                                   }}
                                 >
                                   <span className="truncate">

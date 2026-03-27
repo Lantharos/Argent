@@ -102,6 +102,7 @@ export type AITabData = AppTabBase & {
   model: string | null
   acpModeId?: string | null
   acpSessionId?: string | null
+  collapsedModelGroups?: Record<string, boolean>
   attachments?: PromptAttachment[]
   usageByModel?: Record<string, { usedTokens: number | null; maxTokens: number | null }>
   messages: ChatMessage[]
@@ -172,6 +173,7 @@ export type AppSpace = {
   rootPath: string
   kind?: 'project' | 'global'
   isEssential?: boolean
+  collapsed?: boolean
   tabs: AppTab[]
   activeTabId: string
   secondaryTabId: string | null
@@ -272,6 +274,8 @@ declare global {
         openDocument: (payload: EditorDocumentPayload) => Promise<boolean | null>
         changeDocument: (payload: EditorDocumentPayload) => Promise<boolean | null>
         closeDocument: (payload: Omit<EditorDocumentPayload, 'content' | 'version'>) => Promise<boolean | null>
+        watchPath: (payload: { targetPath: string; kind?: 'file' | 'directory'; recursive?: boolean }) => Promise<boolean>
+        unwatchPath: (payload: { targetPath: string; kind?: 'file' | 'directory' }) => Promise<boolean>
         requestCompletion: (payload: EditorCompletionRequest) => Promise<LspCompletionItem[]>
         requestHover: (payload: EditorHoverRequest) => Promise<LspHover | null>
         requestDefinition: (payload: EditorDefinitionRequest) => Promise<LspLocation[]>

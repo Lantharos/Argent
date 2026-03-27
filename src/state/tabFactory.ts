@@ -14,6 +14,7 @@ export function createTab(type: AppTabType, rootPath: string): AppTab {
       model: null,
       acpModeId: null,
       acpSessionId: null,
+      collapsedModelGroups: {},
       attachments: [],
       usageByModel: {},
       messages: [],

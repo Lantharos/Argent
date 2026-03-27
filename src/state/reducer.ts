@@ -5,6 +5,7 @@ import { createTab } from './tabFactory'
 type Action =
   | { type: 'replace'; value: AppSnapshot }
   | { type: 'set-compact-sidebar'; value: boolean }
+  | { type: 'set-space-collapsed'; spaceId: string; value: boolean }
   | { type: 'add-space'; space: AppSpace }
   | { type: 'rename-space'; spaceId: string; name: string }
   | { type: 'delete-space'; spaceId: string }
@@ -310,6 +311,7 @@ function normalizeSpace(space: AppSpace): AppSpace {
   return {
     ...space,
     kind: normalizedKind,
+    collapsed: Boolean(space.collapsed),
     tabs: normalizedTabs,
     activeTabId: activeFallback,
     tabGroups: normalizeTabGroups({
@@ -366,6 +368,13 @@ export function appReducer(state: AppSnapshot, action: Action): AppSnapshot {
       ...state,
       compactSidebar: action.value,
     }
+  }
+
+  if (action.type === 'set-space-collapsed') {
+    return updateSpace(state, action.spaceId, (space) => ({
+      ...space,
+      collapsed: action.value,
+    }))
   }
 
   if (action.type === 'add-space') {
