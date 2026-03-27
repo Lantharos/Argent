@@ -576,6 +576,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  terminalManager?.disposeAll?.()
   void localPreviewServer?.close()
 })
 

@@ -98,4 +98,14 @@ export class TerminalManager {
     this.sessions.delete(id)
     return true
   }
+
+  disposeAll() {
+    for (const id of Array.from(this.sessions.keys())) {
+      try {
+        this.kill(id)
+      } catch {
+        this.sessions.delete(id)
+      }
+    }
+  }
 }

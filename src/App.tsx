@@ -133,6 +133,26 @@ function App() {
   const activeTab = useMemo(() => getTab(activeSpace, activeSpace?.activeTabId ?? null), [activeSpace])
   const compactSidebar = state.compactSidebar ?? false
 
+  const killTerminalSession = useCallback((sessionId: string | null | undefined) => {
+    if (!sessionId) {
+      return
+    }
+    void window.argent.terminal.kill(sessionId)
+  }, [])
+
+  const killTerminalSessionsForSpace = useCallback((spaceId: string) => {
+    const targetSpace = state.spaces.find((space) => space.id === spaceId)
+    if (!targetSpace) {
+      return
+    }
+
+    for (const tab of targetSpace.tabs) {
+      if (tab.type === 'terminal') {
+        killTerminalSession(tab.sessionId)
+      }
+    }
+  }, [killTerminalSession, state.spaces])
+
   const clearCompactSidebarCloseTimer = useCallback(() => {
     if (compactSidebarCloseTimerRef.current !== null) {
       window.clearTimeout(compactSidebarCloseTimerRef.current)
@@ -592,7 +612,10 @@ function App() {
       onAddEmptySpace={addEmptySpace}
       onCloneRepo={cloneRepoToSpace}
       onRenameSpace={(spaceId: string, name: string) => dispatch({ type: 'rename-space', spaceId, name })}
-      onDeleteSpace={(spaceId: string) => dispatch({ type: 'delete-space', spaceId })}
+      onDeleteSpace={(spaceId: string) => {
+        killTerminalSessionsForSpace(spaceId)
+        dispatch({ type: 'delete-space', spaceId })
+      }}
       onToggleSpaceCollapsed={(spaceId: string, value: boolean) => {
         dispatch({ type: 'set-space-collapsed', spaceId, value })
       }}
@@ -617,6 +640,9 @@ function App() {
       onCloseTab={(spaceId: string, tabId: string) => {
         const targetSpace = state.spaces.find((space) => space.id === spaceId)
         const targetTab = targetSpace?.tabs.find((tab) => tab.id === tabId)
+        if (targetTab?.type === 'terminal') {
+          killTerminalSession(targetTab.sessionId)
+        }
         if (targetSpace?.isEssential && targetTab?.type === 'browser') {
           const matchingEssential = (state.essentialTabs ?? []).find((entry) => entry.id === targetTab.id)
           if (matchingEssential) {

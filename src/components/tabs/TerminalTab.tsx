@@ -375,11 +375,6 @@ export function TerminalTab({ tab, isActive, onChange }: Props) {
 
     return () => {
       cancelled = true
-      const sessionId = sessionIdRef.current
-      if (sessionId) {
-        void window.argent.terminal.kill(sessionId)
-        sessionIdRef.current = null
-      }
       resizeObserver.disconnect()
       if (historyFlushTimerRef.current) {
         window.clearTimeout(historyFlushTimerRef.current)
