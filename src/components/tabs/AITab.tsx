@@ -2865,14 +2865,26 @@ export function AITab({
                   type="button"
                   className="ghost-btn h-10 rounded-xl border border-white/10 px-4 text-[13px] text-[#cfcfcf] hover:text-white"
                   onClick={() => {
-                    void refreshOpenCodeCliStatus(true);
+                    void window.argent.app.relaunch();
                   }}
                   disabled={installingOpenCodeMethodId !== null}
                 >
                   <RefreshCw className="h-3.5 w-3.5" />
-                  <span>Refresh</span>
+                  <span>Restart Argent</span>
                 </button>
               </div>
+              <p className="mx-auto mb-0 mt-4 max-w-[560px] text-[13px] leading-6 text-[#8e8e8e]">
+                You&apos;ll also need Node.js installed. Download it from{" "}
+                <a
+                  href="https://nodejs.org/"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[#cfcfcf] underline decoration-white/20 underline-offset-2 hover:text-white"
+                >
+                  nodejs.org
+                </a>
+                .
+              </p>
               {opencodeCliStatus &&
               opencodeCliStatus.installMethods.length === 0 ? (
                 <div className="mx-auto mt-6 max-w-[560px] rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-4 text-left">
@@ -2880,9 +2892,9 @@ export function AITab({
                     Manual Install
                   </div>
                   <div className="mt-3 space-y-2 font-mono text-[12px] text-[#c8c8c8]">
-                    <div>`bun add -g opencode-ai`</div>
-                    <div>`npm i -g opencode-ai`</div>
-                    <div>`brew install anomalyco/tap/opencode`</div>
+                    <div>bun add -g opencode-ai</div>
+                    <div>npm i -g opencode-ai</div>
+                    <div>brew install anomalyco/tap/opencode</div>
                   </div>
                 </div>
               ) : null}

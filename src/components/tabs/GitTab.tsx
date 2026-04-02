@@ -472,8 +472,14 @@ export function GitTab({ tab, isActive }: Props) {
       }
 
       isActuallyRepo = revRes.success && revRes.stdout?.trim() === 'true'
+      setIsRepo(isActuallyRepo)
       if (!isActuallyRepo) {
         setFiles([])
+        setHistory([])
+        setSelectedCommitHash(null)
+        setCommitPreview(null)
+        setPendingPushCount(0)
+        setRemotes([])
         return
       }
 
@@ -558,11 +564,13 @@ export function GitTab({ tab, isActive }: Props) {
 
   async function initRepo() {
     setLoading(true)
-    await window.argent.git.exec({ cwd: tab.cwd, args: ['config', '--global', '--add', 'safe.directory', '*'] })
-    await window.argent.git.exec({ cwd: tab.cwd, args: ['init'] })
-    setTimeout(() => {
-      void refreshStatus()
-    }, 100)
+    try {
+      await window.argent.git.exec({ cwd: tab.cwd, args: ['config', '--global', '--add', 'safe.directory', '*'] })
+      await window.argent.git.exec({ cwd: tab.cwd, args: ['init'] })
+      await refreshStatus()
+    } finally {
+      setLoading(false)
+    }
   }
 
   async function stageFile(path: string) {
