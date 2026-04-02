@@ -362,6 +362,7 @@ export function appReducer(state: AppSnapshot, action: Action): AppSnapshot {
       compactSidebar: action.value.compactSidebar ?? false,
       essentialTabs: action.value.essentialTabs ?? [],
       windowMaterial: action.value.windowMaterial ?? 'acrylic',
+      godotExecutablePath: action.value.godotExecutablePath ?? null,
     }
   }
 

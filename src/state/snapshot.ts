@@ -60,5 +60,6 @@ export function defaultSnapshot(): AppSnapshot {
     compactSidebar: false,
     essentialTabs: [],
     windowMaterial: 'acrylic',
+    godotExecutablePath: null,
   }
 }

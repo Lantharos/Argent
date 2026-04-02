@@ -188,6 +188,7 @@ export type AppSnapshot = {
   compactSidebar?: boolean
   essentialTabs?: EssentialTab[]
   windowMaterial?: 'acrylic' | 'mica'
+  godotExecutablePath?: string | null
 }
 
 declare global {
@@ -208,6 +209,7 @@ declare global {
       app: {
         loadState: () => Promise<AppSnapshot>
         saveState: (state: AppSnapshot) => Promise<boolean>
+        setGodotExecutable: (path: string | null) => Promise<{ success: boolean; path: string | null; message?: string }>
         chooseFolder: () => Promise<string | null>
         openInExplorer: (targetPath: string) => Promise<boolean>
         getHomeDirectory: () => Promise<string>

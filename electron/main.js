@@ -219,6 +219,30 @@ function setupIpc() {
   setupGitHandlers()
   ipcMain.handle('app:load-state', () => loadState())
   ipcMain.handle('app:save-state', (_, state) => saveState(state))
+  ipcMain.handle('app:set-godot-executable', (_, executablePath) => {
+    const nextPath = typeof executablePath === 'string' ? executablePath.trim() : null
+    if (!nextPath) {
+      const existing = loadState()
+      const nextState = { ...existing, godotExecutablePath: null }
+      saveState(nextState)
+      return { success: true, path: null, message: 'Cleared Godot executable.' }
+    }
+
+    if (!fs.existsSync(nextPath)) {
+      return { success: false, path: null, message: 'That file does not exist.' }
+    }
+
+    const base = path.basename(nextPath).toLowerCase()
+    const looksLikeGodot = base.includes('godot') && (process.platform !== 'win32' || base.endsWith('.exe'))
+    if (!looksLikeGodot) {
+      return { success: false, path: null, message: 'That file does not look like a Godot executable.' }
+    }
+
+    const existing = loadState()
+    const nextState = { ...existing, godotExecutablePath: nextPath }
+    saveState(nextState)
+    return { success: true, path: nextPath, message: 'Godot executable saved.' }
+  })
   ipcMain.handle('app:relaunch', () => {
     app.relaunch()
     app.exit(0)

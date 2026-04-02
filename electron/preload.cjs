@@ -47,6 +47,7 @@ contextBridge.exposeInMainWorld('argent', {
   app: {
     loadState: () => ipcRenderer.invoke('app:load-state'),
     saveState: (state) => ipcRenderer.invoke('app:save-state', state),
+    setGodotExecutable: (executablePath) => ipcRenderer.invoke('app:set-godot-executable', executablePath),
     chooseFolder: () => ipcRenderer.invoke('app:choose-folder'),
     openInExplorer: (targetPath) => ipcRenderer.invoke('app:open-in-explorer', targetPath),
     getHomeDirectory: () => ipcRenderer.invoke('app:get-home-directory'),

@@ -894,6 +894,26 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onOpenBro
     }
   }
 
+  async function handleSelectGodotExecutable() {
+    setInstallMessage(null)
+    try {
+      const picked = await window.argent.fs.openFile(cwd)
+      if (!picked) {
+        return
+      }
+      const result = await window.argent.app.setGodotExecutable(picked)
+      if (!result.success) {
+        setInstallMessage(result.message ?? 'Could not save Godot executable.')
+        return
+      }
+      setInstallMessage('Godot executable saved.')
+      const updated = await window.argent.editor.detectWorkspace(cwd)
+      setWorkspaceInfo(updated)
+    } catch (error) {
+      setInstallMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
   async function handleDelete(node: FileNode) {
     await window.argent.fs.delete(node.path)
     if (clipboard?.path === node.path) {
@@ -1097,10 +1117,18 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onOpenBro
               {startingServer ? 'Starting...' : 'Start LSP'}
             </button>
           ) : null}
-          {workspaceInfo?.isGodotProject && languageId === 'gdscript' ? (
+          {workspaceInfo?.isGodotProject ? (
             <>
               <button
                 className="ml-auto flex h-[22px] items-center gap-1 rounded border border-white/10 px-2.5 text-[11px] text-[#a3a3a3] transition-colors hover:bg-white/5 hover:text-white"
+                onClick={() => { void handleSelectGodotExecutable() }}
+                title="Select the Godot executable used by Argent"
+              >
+                <FolderOpen size={11} />
+                Select
+              </button>
+              <button
+                className="flex h-[22px] items-center gap-1 rounded border border-white/10 px-2.5 text-[11px] text-[#a3a3a3] transition-colors hover:bg-white/5 hover:text-white"
                 onClick={() => { void handleLaunchGodotEditor() }}
                 title={workspaceInfo.godotExecutable ?? 'Launch Godot editor'}
               >

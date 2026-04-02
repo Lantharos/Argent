@@ -153,7 +153,14 @@ export async function resolveCommandSpec(spec, workspacePath) {
   }
 }
 
-export async function detectGodotExecutable() {
+export async function detectGodotExecutable(configuredExecutable = null) {
+  if (typeof configuredExecutable === 'string' && configuredExecutable.trim()) {
+    const candidate = configuredExecutable.trim()
+    if (fs.existsSync(candidate)) {
+      return candidate
+    }
+  }
+
   const directHints = [
     process.env.GODOT_EXECUTABLE,
     path.join(os.homedir(), 'AppData', 'Local', 'Programs', 'Godot', 'Godot.exe'),

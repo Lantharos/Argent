@@ -18,6 +18,7 @@ import {
   resolveCommandSpec,
   resolveExecutable,
 } from './languages.js'
+import { loadState } from '../store/stateStore.js'
 
 function toDocumentUri(filePath) {
   return pathToFileURL(path.resolve(filePath)).href
@@ -54,10 +55,11 @@ export class LanguageServerManager {
 
   async detectWorkspace(workspacePath) {
     const godotProject = isGodotProject(workspacePath)
+    const configured = loadState()?.godotExecutablePath ?? null
     return {
       workspacePath,
       isGodotProject: godotProject,
-      godotExecutable: godotProject ? await detectGodotExecutable() : null,
+      godotExecutable: godotProject ? await detectGodotExecutable(configured) : null,
     }
   }
 
@@ -140,9 +142,21 @@ export class LanguageServerManager {
   }
 
   async launchGodotEditor(workspacePath) {
-    const executable = await detectGodotExecutable()
+    const configured = loadState()?.godotExecutablePath ?? null
+    const executable = await detectGodotExecutable(configured)
     if (!executable) {
-      throw new Error('Godot executable not found in PATH. Set GODOT_EXECUTABLE or install Godot.')
+      throw new Error(
+        [
+          'Godot executable not found.',
+          '',
+          'Fix options:',
+          '- In Argent: open Command Palette (Ctrl+K) → "Set Godot executable"',
+          '- Or set `GODOT_EXECUTABLE` to the full path of Godot',
+          '- Or add Godot to PATH',
+          '',
+          'Windows PATH (per-user): Settings → System → About → Advanced system settings → Environment Variables… → User variables → Path → Edit → New → add your Godot folder (the one containing Godot.exe)',
+        ].join('\n'),
+      )
     }
 
     const child = spawn(executable, ['--path', workspacePath, '--editor'], {
@@ -156,9 +170,21 @@ export class LanguageServerManager {
   }
 
   async runGodotProject(workspacePath) {
-    const executable = await detectGodotExecutable()
+    const configured = loadState()?.godotExecutablePath ?? null
+    const executable = await detectGodotExecutable(configured)
     if (!executable) {
-      throw new Error('Godot executable not found in PATH. Set GODOT_EXECUTABLE or install Godot.')
+      throw new Error(
+        [
+          'Godot executable not found.',
+          '',
+          'Fix options:',
+          '- In Argent: open Command Palette (Ctrl+K) → "Set Godot executable"',
+          '- Or set `GODOT_EXECUTABLE` to the full path of Godot',
+          '- Or add Godot to PATH',
+          '',
+          'Windows PATH (per-user): Settings → System → About → Advanced system settings → Environment Variables… → User variables → Path → Edit → New → add your Godot folder (the one containing Godot.exe)',
+        ].join('\n'),
+      )
     }
 
     const child = spawn(executable, ['--path', workspacePath], {
