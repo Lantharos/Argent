@@ -55,6 +55,7 @@ contextBridge.exposeInMainWorld('argent', {
     getPreviewUrl: (payload) => ipcRenderer.invoke('app:get-preview-url', payload),
     getUpdateReady: () => ipcRenderer.invoke('app:get-update-ready'),
     restartToUpdate: () => ipcRenderer.invoke('app:restart-to-update'),
+    relaunch: () => ipcRenderer.invoke('app:relaunch'),
     triggerTestUpdateReady: () => ipcRenderer.invoke('app:trigger-test-update-ready'),
     onOpenCommandPalette: (callback) => on('app:open-command-palette', callback),
     onUpdateReady: (callback) => on('app:update-ready', callback),

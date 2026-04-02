@@ -5,6 +5,7 @@ import { createTab } from './tabFactory'
 type Action =
   | { type: 'replace'; value: AppSnapshot }
   | { type: 'set-compact-sidebar'; value: boolean }
+  | { type: 'set-window-material'; value: 'acrylic' | 'mica' }
   | { type: 'set-space-collapsed'; spaceId: string; value: boolean }
   | { type: 'add-space'; space: AppSpace }
   | { type: 'rename-space'; spaceId: string; name: string }
@@ -360,6 +361,7 @@ export function appReducer(state: AppSnapshot, action: Action): AppSnapshot {
       spaces: action.value.spaces.map(normalizeSpace),
       compactSidebar: action.value.compactSidebar ?? false,
       essentialTabs: action.value.essentialTabs ?? [],
+      windowMaterial: action.value.windowMaterial ?? 'acrylic',
     }
   }
 
@@ -367,6 +369,13 @@ export function appReducer(state: AppSnapshot, action: Action): AppSnapshot {
     return {
       ...state,
       compactSidebar: action.value,
+    }
+  }
+
+  if (action.type === 'set-window-material') {
+    return {
+      ...state,
+      windowMaterial: action.value,
     }
   }
 

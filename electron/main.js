@@ -108,6 +108,8 @@ function createMainWindow() {
   const isWindows = process.platform === 'win32'
   const isMac = process.platform === 'darwin'
   const useLegacyWindowsVisuals = isWindows10()
+  const persistedState = loadState()
+  const preferredMaterial = persistedState?.windowMaterial === 'mica' ? 'mica' : 'acrylic'
   const primaryDisplay = screen.getPrimaryDisplay()
   const { width: availableWidth, height: availableHeight } = primaryDisplay.workAreaSize
   const shouldStartMaximized =
@@ -144,7 +146,7 @@ function createMainWindow() {
 
   win.setBackgroundColor(useLegacyWindowsVisuals ? '#0b0b0b' : '#00000000')
   if (isWindows && typeof win.setBackgroundMaterial === 'function') {
-    win.setBackgroundMaterial(useLegacyWindowsVisuals ? 'none' : 'acrylic')
+    win.setBackgroundMaterial(useLegacyWindowsVisuals ? 'none' : preferredMaterial)
   }
   if (shouldStartMaximized) {
     win.maximize()
@@ -217,6 +219,11 @@ function setupIpc() {
   setupGitHandlers()
   ipcMain.handle('app:load-state', () => loadState())
   ipcMain.handle('app:save-state', (_, state) => saveState(state))
+  ipcMain.handle('app:relaunch', () => {
+    app.relaunch()
+    app.exit(0)
+    return true
+  })
 
   ipcMain.handle('window:minimize', (event) => {
     const win = BrowserWindow.fromWebContents(event.sender)

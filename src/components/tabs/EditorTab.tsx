@@ -369,6 +369,7 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onOpenBro
   const [creatingItem, setCreatingItem] = useState(false)
   const sidebarRef = useRef<HTMLDivElement | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
+  const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null)
   const versionRef = useRef(1)
   const suppressModelChangeRef = useRef(false)
   const currentFileRef = useRef<string | null>(tab.filePath)
@@ -1030,6 +1031,22 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onOpenBro
         event.preventDefault()
         void saveFile()
       }
+
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
+        if (!editorRef.current) {
+          return
+        }
+        event.preventDefault()
+        void editorRef.current.getAction('actions.find')?.run()
+      }
+
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'h') {
+        if (!editorRef.current) {
+          return
+        }
+        event.preventDefault()
+        void editorRef.current.getAction('editor.action.startFindReplaceAction')?.run()
+      }
     }
 
     window.addEventListener('keydown', handleWindowKeyDown, true)
@@ -1138,7 +1155,14 @@ export function EditorTab({ tab, cwd, isActive = true, onOpenInNewTab, onOpenBro
             </div>
           ) : tab.filePath && model ? (
             <div className="absolute inset-0 h-full w-full [&_.monaco-editor]:!bg-transparent [&_.monaco-editor-background]:!bg-transparent">
-              <MonacoEditorSurface model={model} fontSize={fontSize} onSave={handleSave} />
+              <MonacoEditorSurface
+                model={model}
+                fontSize={fontSize}
+                onSave={handleSave}
+                onEditorReady={(editor) => {
+                  editorRef.current = editor
+                }}
+              />
             </div>
           ) : (
             <div className="grid h-full place-items-center text-center text-sm text-[#666]">

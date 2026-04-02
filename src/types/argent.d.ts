@@ -187,6 +187,7 @@ export type AppSnapshot = {
   activeSpaceId: string | null
   compactSidebar?: boolean
   essentialTabs?: EssentialTab[]
+  windowMaterial?: 'acrylic' | 'mica'
 }
 
 declare global {
@@ -215,6 +216,7 @@ declare global {
         getPreviewUrl: (payload: { workspacePath: string; filePath: string }) => Promise<string>
         getUpdateReady: () => Promise<{ version: string | null } | null>
         restartToUpdate: () => Promise<boolean>
+        relaunch: () => Promise<boolean>
         triggerTestUpdateReady: () => Promise<{ version: string | null } | null>
         onOpenCommandPalette: (callback: () => void) => () => void
         onUpdateReady: (callback: (payload: { version: string | null }) => void) => () => void

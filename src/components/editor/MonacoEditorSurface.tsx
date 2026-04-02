@@ -7,16 +7,22 @@ type Props = {
   fontSize: number
   readOnly?: boolean
   onSave?: () => void
+  onEditorReady?: (editor: MonacoEditor.IStandaloneCodeEditor) => void
 }
 
-export function MonacoEditorSurface({ model, fontSize, readOnly = false, onSave }: Props) {
+export function MonacoEditorSurface({ model, fontSize, readOnly = false, onSave, onEditorReady }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null)
   const onSaveRef = useRef(onSave)
+  const onEditorReadyRef = useRef(onEditorReady)
 
   useEffect(() => {
     onSaveRef.current = onSave
   }, [onSave])
+
+  useEffect(() => {
+    onEditorReadyRef.current = onEditorReady
+  }, [onEditorReady])
 
   useEffect(() => {
     if (!containerRef.current || editorRef.current) {
@@ -45,7 +51,7 @@ export function MonacoEditorSurface({ model, fontSize, readOnly = false, onSave 
       },
       snippetSuggestions: 'top',
       suggestOnTriggerCharacters: true,
-      fixedOverflowWidgets: false,
+      fixedOverflowWidgets: true,
       bracketPairColorization: { enabled: true },
       guides: {
         bracketPairs: false,
@@ -62,7 +68,16 @@ export function MonacoEditorSurface({ model, fontSize, readOnly = false, onSave 
       onSaveRef.current?.()
     })
 
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyF, () => {
+      void editor.getAction('actions.find')?.run()
+    })
+
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyH, () => {
+      void editor.getAction('editor.action.startFindReplaceAction')?.run()
+    })
+
     editorRef.current = editor
+    onEditorReadyRef.current?.(editor)
 
     return () => {
       editor.dispose()

@@ -59,5 +59,6 @@ export function defaultSnapshot(): AppSnapshot {
     activeSpaceId: null,
     compactSidebar: false,
     essentialTabs: [],
+    windowMaterial: 'acrylic',
   }
 }

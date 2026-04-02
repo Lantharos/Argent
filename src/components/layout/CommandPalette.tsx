@@ -8,6 +8,7 @@ import {
   FolderOpen,
   GitBranch,
   Globe,
+  Palette,
   Plus,
   Search,
   Sparkles,
@@ -22,7 +23,7 @@ type CommandPaletteItem = {
   title: string
   subtitle: string
   section: string
-  icon: 'search' | 'browser' | 'ai' | 'terminal' | 'editor' | 'git' | 'tab' | 'space' | 'new'
+  icon: 'search' | 'browser' | 'ai' | 'terminal' | 'editor' | 'git' | 'tab' | 'space' | 'new' | 'appearance'
   hint?: string
   run: () => void
 }
@@ -31,6 +32,8 @@ type Props = {
   spaces: AppSpace[]
   activeSpaceId: string | null
   compactSidebar: boolean
+  windowMaterial: 'acrylic' | 'mica'
+  onApplyWindowMaterial: (next: 'acrylic' | 'mica') => Promise<void>
   onCreateTab: (spaceId: string, tabType: AppTabType, patch?: Partial<AppTab>) => void
   onSelectTab: (spaceId: string, tabId: string) => void
   onAddSpaceFromFolder: () => Promise<boolean>
@@ -137,6 +140,7 @@ function getIcon(icon: CommandPaletteItem['icon']) {
   if (icon === 'terminal') return <TerminalSquare className="h-[15px] w-[15px]" />
   if (icon === 'editor') return <FileCode2 className="h-[15px] w-[15px]" />
   if (icon === 'git') return <GitBranch className="h-[15px] w-[15px]" />
+  if (icon === 'appearance') return <Palette className="h-[15px] w-[15px]" />
   if (icon === 'space') return <FolderOpen className="h-[15px] w-[15px]" />
   if (icon === 'new') return <Plus className="h-[15px] w-[15px]" />
   return <Search className="h-[15px] w-[15px]" />
@@ -146,6 +150,8 @@ export function CommandPalette({
   spaces,
   activeSpaceId,
   compactSidebar,
+  windowMaterial,
+  onApplyWindowMaterial,
   onCreateTab,
   onSelectTab,
   onAddSpaceFromFolder,
@@ -157,6 +163,7 @@ export function CommandPalette({
   const [visible, setVisible] = useState(false)
   const [query, setQuery] = useState('')
   const [activeIndex, setActiveIndex] = useState(0)
+  const [armedCommandId, setArmedCommandId] = useState<string | null>(null)
   const deferredQuery = useDeferredValue(query)
   const inputRef = useRef<HTMLInputElement | null>(null)
   const listRef = useRef<HTMLDivElement | null>(null)
@@ -173,6 +180,7 @@ export function CommandPalette({
     setVisible(false)
     setQuery('')
     setActiveIndex(0)
+    setArmedCommandId(null)
   }
 
   useEffect(() => {
@@ -402,8 +410,27 @@ export function CommandPalette({
       ['compact sidebar view mode', compactSidebar ? 'disable compact' : 'enable compact'],
     )
 
+    const materialId = 'toggle-window-material'
+    const nextMaterial: 'acrylic' | 'mica' = windowMaterial === 'acrylic' ? 'mica' : 'acrylic'
+    const armed = armedCommandId === materialId
+    pushIfMatches({
+      id: materialId,
+      title: `Switch to ${nextMaterial === 'mica' ? 'Mica' : 'Acrylic'}`,
+      subtitle: armed ? 'Press Enter again to apply (restarts Argent)' : `Currently using ${windowMaterial === 'mica' ? 'Mica' : 'Acrylic'}`,
+      section: 'View',
+      icon: 'appearance',
+      run: () => {
+        if (armedCommandId === materialId) {
+          void onApplyWindowMaterial(nextMaterial)
+          closePalette()
+          return
+        }
+        setArmedCommandId(materialId)
+      },
+    }, ['mica acrylic backdrop material blur'])
+
     return nextItems.slice(0, 24)
-  }, [activeSpace, activeSpaceId, compactSidebar, deferredQuery, onAddEmptySpace, onAddSpaceFromFolder, onCreateTab, onSelectTab, onSetCompactMode, spaces])
+  }, [activeSpace, activeSpaceId, armedCommandId, compactSidebar, deferredQuery, onAddEmptySpace, onAddSpaceFromFolder, onApplyWindowMaterial, onCreateTab, onSelectTab, onSetCompactMode, spaces, windowMaterial])
 
   const selectedIndex = items.length === 0 ? 0 : Math.min(activeIndex, items.length - 1)
 
@@ -508,6 +535,7 @@ export function CommandPalette({
                   {sectionItems.map((item) => {
                     const index = items.findIndex((entry) => entry.id === item.id)
                     const active = index === selectedIndex
+                    const armed = item.id === armedCommandId
 
                     return (
                       <button
@@ -529,8 +557,8 @@ export function CommandPalette({
                           {getIcon(item.icon)}
                         </span>
                         <span className="min-w-0 flex-1">
-                          <span className="block truncate text-[13.5px] font-medium">{item.title}</span>
-                          <span className="mt-0.5 block truncate text-[12px] text-[#8d8d8d]">{item.subtitle}</span>
+                          <span className={`block truncate text-[13.5px] font-medium ${armed ? 'text-red-300' : ''}`}>{item.title}</span>
+                          <span className={`mt-0.5 block truncate text-[12px] ${armed ? 'text-red-400/80' : 'text-[#8d8d8d]'}`}>{item.subtitle}</span>
                         </span>
                         {item.hint ? (
                           <span className="shrink-0 rounded-[8px] bg-white/[0.05] px-2.5 py-1 text-[10px] font-medium text-[#8d8d8d]">

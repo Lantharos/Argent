@@ -132,6 +132,7 @@ function App() {
   const activeSpace = useMemo(() => getActiveSpace(state), [state])
   const activeTab = useMemo(() => getTab(activeSpace, activeSpace?.activeTabId ?? null), [activeSpace])
   const compactSidebar = state.compactSidebar ?? false
+  const windowMaterial = state.windowMaterial ?? 'acrylic'
 
   const killTerminalSession = useCallback((sessionId: string | null | undefined) => {
     if (!sessionId) {
@@ -577,6 +578,16 @@ function App() {
     dispatch({ type: 'set-active-tab', spaceId, tabId })
   }
 
+  async function applyWindowMaterial(next: 'acrylic' | 'mica') {
+    const nextState: AppSnapshot = {
+      ...state,
+      windowMaterial: next,
+    }
+    dispatch({ type: 'set-window-material', value: next })
+    await window.argent.app.saveState(nextState)
+    await window.argent.app.relaunch()
+  }
+
   if (!loaded) {
     return (
       <div className="grid min-h-screen place-items-center bg-transparent">
@@ -847,6 +858,8 @@ function App() {
         spaces={state.spaces}
         activeSpaceId={state.activeSpaceId}
         compactSidebar={compactSidebar}
+        windowMaterial={windowMaterial}
+        onApplyWindowMaterial={applyWindowMaterial}
         onCreateTab={createTabFromPalette}
         onSelectTab={selectWorkspaceTab}
         onAddSpaceFromFolder={addSpaceFromFolder}
